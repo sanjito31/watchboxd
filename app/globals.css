@@ -1,26 +1,33 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
+/* Letterboxd UI palette (letterboxd.com / Refero design tokens) */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  --color-lb-midnight: #14181c;
+  --color-lb-charcoal: #202830;
+  --color-lb-shadow: #2c3440;
+  --color-lb-ocean: #445566;
+  --color-lb-green: #00ac1c;
+  --color-lb-green-hover: #00c030;
+  --color-lb-vivid: #00e054;
+  --color-lb-star: #ff9933;
+  --color-lb-ghost: #586370;
+  --color-lb-steel: #667788;
+  --color-lb-cloud: #778899;
+  --color-lb-mist: #8899aa;
+  --color-lb-ash: #99aabb;
+  --color-lb-dust: #c8d4e0;
+  --color-lb-porcelain: #ddeeff;
+  --color-lb-white: #ffffff;
+
+  --color-background: var(--color-lb-midnight);
+  --color-foreground: var(--color-lb-ash);
+  --font-sans: var(--font-geist-mono);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--color-lb-midnight);
+  color: var(--color-lb-ash);
+  font-family: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco,
+    Consolas, "Liberation Mono", "Courier New", monospace;
 }
