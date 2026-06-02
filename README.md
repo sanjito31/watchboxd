@@ -4,6 +4,8 @@ Compare public Letterboxd watchlists with friends and find films you have in com
 
 Add people by username or profile URL, scrape their public watchlists on the server, and browse overlap ranked by how many party members want to see each film (at least 2 in common). The UI uses Letterboxd’s dark palette and shows who has each title with profile avatars.
 
+**Live site:** [https://watchboxd-awj9cp8vv-sanjay-kumars-projects-790869c2.vercel.app/](https://watchboxd-awj9cp8vv-sanjay-kumars-projects-790869c2.vercel.app/)
+
 ## Features
 
 - **Watch party** — up to 10 Letterboxd users per party
