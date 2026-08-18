@@ -16,7 +16,7 @@ Add people by username or profile URL, scrape their public watchlists on the ser
 
 ## Getting started
 
-Requires [Node.js](https://nodejs.org/) 20+.
+Requires [Node.js](https://nodejs.org/) 22+.
 
 ```bash
 npm install
@@ -37,6 +37,27 @@ npm run start
 ```bash
 npm test
 ```
+
+### Database
+
+Prisma connects to Supabase using two server-only variables in `.env.local`:
+
+- `DATABASE_URL` uses the transaction-mode pooler for application queries.
+- `DIRECT_URL` uses the session-mode pooler for Prisma migrations and tooling.
+
+Useful commands:
+
+```bash
+npm run db:validate
+npm run db:generate
+npm run db:test
+npm run db:migrate -- --name <migration-name>
+npm run db:deploy
+npm run db:studio
+```
+
+Set both database variables in the deployment environment as well. Generated
+Prisma Client files are created automatically during `npm install`.
 
 ## Usage
 
