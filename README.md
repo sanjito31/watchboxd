@@ -149,6 +149,17 @@ Fresh responses return `200`; misses return `202` with `Location` and
    inspect retries, oldest-message age, function duration, and database usage
    before promoting to Production.
 
+Run the deployed API smoke test from this repository without a browser:
+
+```bash
+npm run api:smoke -- https://your-app.vercel.app letterboxd-username
+```
+
+The default checks the user profile and polls any `202` job until it finishes.
+Pass `network`, `watchlist`, `watched`, `all`, or a comma-separated selection as
+the final argument. Watchlist and watched checks print only the first five
+items.
+
 ## Stack
 
 - [Next.js](https://nextjs.org/) 16 (App Router)
