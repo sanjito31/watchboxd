@@ -1,0 +1,15 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "app/api/queues/scrape-jobs/route.ts": {
+      "experimentalTriggers": [
+        {
+          "type": "queue/v2beta",
+          "topic": "scrape-jobs-v1",
+          "retryAfterSeconds": 5,
+          "initialDelaySeconds": 0
+        }
+      ]
+    }
+  }
+}

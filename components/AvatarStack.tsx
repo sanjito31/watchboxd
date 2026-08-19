@@ -1,4 +1,4 @@
-import type { PartyMember } from "@/lib/types";
+import type { PartyMember } from "@/lib/hooks/ui-types";
 
 interface AvatarStackProps {
   members: PartyMember[];

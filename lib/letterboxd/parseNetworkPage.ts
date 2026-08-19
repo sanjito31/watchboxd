@@ -7,10 +7,22 @@ export interface NetworkMember {
   avatarUrl?: string;
 }
 
+export interface ParsedNetworkPage {
+  members: NetworkMember[];
+  hasNextPage: boolean;
+}
+
 export function parseNetworkPageHtml(
   html: string,
   excludeUsername?: string
 ): NetworkMember[] {
+  return parseNetworkPage(html, excludeUsername).members;
+}
+
+export function parseNetworkPage(
+  html: string,
+  excludeUsername?: string
+): ParsedNetworkPage {
   const $ = cheerio.load(html);
   const members: NetworkMember[] = [];
   const seen = new Set<string>();
@@ -37,7 +49,11 @@ export function parseNetworkPageHtml(
     members.push({ username, displayName, avatarUrl });
   });
 
-  return members;
+  return {
+    members,
+    hasNextPage:
+      $(".pagination .paginate-nextprev a.next[href]").length > 0,
+  };
 }
 
 function extractProfileSlug(href: string): string | null {

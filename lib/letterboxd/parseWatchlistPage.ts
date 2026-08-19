@@ -1,16 +1,17 @@
 import * as cheerio from "cheerio";
-import type { Film } from "@/lib/types";
 import { LETTERBOXD_BASE, SELECTORS } from "./constants";
 import {
   buildPosterUrlCandidates,
+  extractLetterboxdFilmIdFromResolvablePosterPath,
   parseResolvablePosterPath,
 } from "./buildPosterUrl";
+import type { LetterboxdFilmGridItem } from "./types";
 
 const TITLE_YEAR_RE = /^(.+?)\s*\((\d{4})\)\s*$/;
 
-export function parseWatchlistHtml(html: string): Film[] {
+export function parseFilmGridHtml(html: string): LetterboxdFilmGridItem[] {
   const $ = cheerio.load(html);
-  const films: Film[] = [];
+  const films: LetterboxdFilmGridItem[] = [];
   const seen = new Set<string>();
 
   $(SELECTORS.poster).each((_, el) => {
@@ -27,9 +28,10 @@ export function parseWatchlistHtml(html: string): Film[] {
     const rawName = node.attr(SELECTORS.itemName)?.trim();
     const { title, year } = parseTitleYear(rawName, slug);
 
-    const posterMeta = parseResolvablePosterPath(
-      node.attr(SELECTORS.resolvablePosterPath)
-    );
+    const resolvablePosterPath = node.attr(SELECTORS.resolvablePosterPath);
+    const posterMeta = parseResolvablePosterPath(resolvablePosterPath);
+    const letterboxdFilmId =
+      extractLetterboxdFilmIdFromResolvablePosterPath(resolvablePosterPath);
 
     const width = Number.parseInt(node.attr("data-image-width") ?? "125", 10);
     const height = Number.parseInt(node.attr("data-image-height") ?? "187", 10);
@@ -45,11 +47,18 @@ export function parseWatchlistHtml(html: string): Film[] {
         )
       : [];
     const legacyImage = node.attr(SELECTORS.image);
-    const allPosterUrls = legacyImage
-      ? [legacyImage, ...posterUrls]
-      : posterUrls;
+    const allPosterUrls = [
+      ...new Set(legacyImage ? [legacyImage, ...posterUrls] : posterUrls),
+    ];
 
     films.push({
+      position: films.length,
+      sourceTitle: title,
+      sourceSlug: slug,
+      sourceYear: year ?? null,
+      resolutionStatus: "pending",
+      letterboxdFilmId,
+      letterboxdPosterUrls: allPosterUrls,
       slug,
       title,
       year,
@@ -62,12 +71,15 @@ export function parseWatchlistHtml(html: string): Film[] {
   return films;
 }
 
-function extractFilmSlug(link: string): string | null {
+/** Backward-compatible name used by the current watchlist route. */
+export const parseWatchlistHtml = parseFilmGridHtml;
+
+export function extractFilmSlug(link: string): string | null {
   const match = link.match(/\/film\/([^/]+)\//);
   return match?.[1] ?? null;
 }
 
-function parseTitleYear(
+export function parseTitleYear(
   rawName: string | undefined,
   slug: string
 ): { title: string; year?: number } {

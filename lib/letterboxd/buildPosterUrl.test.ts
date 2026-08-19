@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildPosterUrl,
   buildPosterUrlCandidates,
+  extractLetterboxdFilmIdFromFilmUid,
+  extractLetterboxdFilmIdFromResolvablePosterPath,
   parseResolvablePosterPath,
   posterSlugVariants,
 } from "./buildPosterUrl";
@@ -47,5 +49,18 @@ describe("parseResolvablePosterPath", () => {
       cacheBustingKey: "4e947183",
       hasDefaultPoster: true,
     });
+  });
+
+  it("retains Letterboxd film IDs independently of TMDB identity", () => {
+    expect(extractLetterboxdFilmIdFromFilmUid("film:157336")).toBe(157336);
+    expect(extractLetterboxdFilmIdFromFilmUid("list:157336")).toBeNull();
+    expect(
+      extractLetterboxdFilmIdFromResolvablePosterPath(
+        '{&quot;postered&quot;:{&quot;uid&quot;:&quot;film:27205&quot;}}'
+      )
+    ).toBe(27205);
+    expect(
+      extractLetterboxdFilmIdFromResolvablePosterPath("{bad-json")
+    ).toBeNull();
   });
 });

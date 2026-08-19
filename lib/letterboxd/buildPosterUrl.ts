@@ -69,6 +69,35 @@ export function decodeHtmlJsonAttr(raw: string): unknown {
   return JSON.parse(decoded);
 }
 
+export function extractLetterboxdFilmIdFromFilmUid(
+  filmUid: string | null | undefined
+): number | null {
+  const match = filmUid?.trim().match(/^film:(\d+)$/);
+  if (!match) return null;
+
+  const letterboxdFilmId = Number.parseInt(match[1]!, 10);
+  return Number.isSafeInteger(letterboxdFilmId) && letterboxdFilmId > 0
+    ? letterboxdFilmId
+    : null;
+}
+
+export function extractLetterboxdFilmIdFromResolvablePosterPath(
+  raw: string | undefined
+): number | null {
+  if (!raw) return null;
+
+  try {
+    const data = decodeHtmlJsonAttr(raw) as {
+      postered?: { uid?: unknown };
+    };
+    return typeof data.postered?.uid === "string"
+      ? extractLetterboxdFilmIdFromFilmUid(data.postered.uid)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface ResolvablePosterPath {
   lid: string;
   uid: string;
