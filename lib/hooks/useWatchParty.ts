@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import type { PartyMember } from "@/lib/types";
+import type { PartyMember } from "./ui-types";
 import { parseUsername } from "@/lib/letterboxd/parseUsername";
 
 const STORAGE_KEY = "letterboxd-watch-party";

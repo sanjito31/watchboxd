@@ -29,8 +29,14 @@ describe("parseWatchlistHtml", () => {
   it("extracts films from LazyPoster markup", () => {
     const films = parseWatchlistHtml(fixture);
 
-    expect(films).toHaveLength(2);
+    expect(films).toHaveLength(3);
     expect(films[0]).toMatchObject({
+      position: 0,
+      sourceTitle: "Interstellar",
+      sourceSlug: "interstellar",
+      sourceYear: 2014,
+      resolutionStatus: "pending",
+      letterboxdFilmId: 157336,
       slug: "interstellar",
       title: "Interstellar",
       year: 2014,
@@ -40,7 +46,15 @@ describe("parseWatchlistHtml", () => {
       "157336-interstellar-0-125-0-187-crop.jpg?v=abc12345"
     );
     expect(films[0]?.posterUrls?.length).toBeGreaterThan(1);
+    expect(films[0]?.letterboxdPosterUrls).toEqual(films[0]?.posterUrls);
     expect(films.find((f) => f.slug === "inception")).toBeDefined();
+    expect(films.find((f) => f.slug === "no-direct-id")).toMatchObject({
+      letterboxdFilmId: null,
+      resolutionStatus: "pending",
+      letterboxdPosterUrls: [
+        "https://a.ltrbxd.com/legacy/no-direct-id.jpg",
+      ],
+    });
     expect(films.find((f) => f.slug === "the-bear")).toBeUndefined();
   });
 });

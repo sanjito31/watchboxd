@@ -4,10 +4,12 @@ import { PrismaClient } from "../lib/generated/prisma/client";
 
 loadEnvConfig(process.cwd());
 
-const connectionString = process.env.DATABASE_URL;
+const connectionString = process.env.TEST_DATABASE_URL;
 
 if (!connectionString) {
-  throw new Error("DATABASE_URL is not set");
+  throw new Error(
+    "TEST_DATABASE_URL is not set; refusing to smoke-test a non-isolated database"
+  );
 }
 
 async function main() {

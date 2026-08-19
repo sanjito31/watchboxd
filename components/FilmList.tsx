@@ -1,9 +1,9 @@
-import type { OverlapFilm } from "@/lib/types";
+import type { OverlapFilmDto } from "@/lib/api/contracts";
 import { AvatarStack } from "./AvatarStack";
 import { PosterImage } from "./PosterImage";
 
 interface FilmListProps {
-  films: OverlapFilm[];
+  films: OverlapFilmDto[];
 }
 
 export function FilmList({ films }: FilmListProps) {
@@ -19,18 +19,18 @@ export function FilmList({ films }: FilmListProps) {
   return (
     <ul className="divide-y divide-lb-shadow rounded-xl border border-lb-shadow overflow-hidden">
       {films.map((film) => (
-        <li key={film.slug}>
+        <li key={film.letterboxdSlug}>
           <a
-            href={film.url}
+            href={film.letterboxdUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="group flex cursor-pointer items-center gap-4 bg-lb-charcoal px-4 py-3 transition hover:bg-lb-shadow"
           >
             <span className="shrink-0">
               <PosterImage
-                slug={film.slug}
                 posterUrl={film.posterUrl}
-                posterUrls={film.posterUrls}
+                posterFallbackUrls={film.posterFallbackUrls}
+                alt={`${film.title} poster`}
                 width={48}
                 height={72}
                 className="h-[72px] w-12 rounded object-cover bg-lb-shadow"
@@ -49,6 +49,13 @@ export function FilmList({ films }: FilmListProps) {
               <span className="text-xs text-lb-steel">
                 On {film.overlapCount} of {film.partySize} watchlists
               </span>
+              {film.resolutionStatus !== "resolved" && (
+                <span className="mt-0.5 block text-xs text-lb-cloud">
+                  {film.resolutionStatus === "pending"
+                    ? "Movie details are still loading"
+                    : "Some movie details are unavailable"}
+                </span>
+              )}
             </span>
             <AvatarStack members={film.presentFor} />
           </a>

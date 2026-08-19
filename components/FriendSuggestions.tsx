@@ -1,17 +1,24 @@
 "use client";
 
-import type { NetworkMember, PartyMember } from "@/lib/types";
+import type {
+  AsyncResourceStatus,
+  NetworkMember,
+  PartyMember,
+} from "@/lib/hooks/ui-types";
 import { MAX_SUGGESTIONS_SHOWN } from "@/lib/ui-constants";
 
 interface FriendSuggestionsProps {
   sourceMember: PartyMember;
   mutuals: NetworkMember[];
   following: NetworkMember[];
-  loading: boolean;
+  status: AsyncResourceStatus;
   error?: string;
+  recoverable?: boolean;
+  stale?: boolean;
   truncated?: boolean;
   partyUsernames: Set<string>;
   onAdd: (username: string) => string | null;
+  onRetry: () => void;
   partyFull: boolean;
 }
 
@@ -55,13 +62,17 @@ export function FriendSuggestions({
   sourceMember,
   mutuals,
   following,
-  loading,
+  status,
   error,
+  recoverable,
+  stale,
   truncated,
   partyUsernames,
   onAdd,
+  onRetry,
   partyFull,
 }: FriendSuggestionsProps) {
+  const loading = status === "loading" || status === "pending";
   const availableMutuals = mutuals
     .filter((m) => !partyUsernames.has(m.username))
     .slice(0, MAX_SUGGESTIONS_SHOWN);
@@ -70,7 +81,13 @@ export function FriendSuggestions({
     .filter((m) => !partyUsernames.has(m.username))
     .slice(0, Math.max(0, MAX_SUGGESTIONS_SHOWN - availableMutuals.length));
 
-  if (!loading && !error && availableMutuals.length === 0 && availableFollowing.length === 0) {
+  if (
+    !loading &&
+    !error &&
+    !stale &&
+    availableMutuals.length === 0 &&
+    availableFollowing.length === 0
+  ) {
     return null;
   }
 
@@ -86,17 +103,31 @@ export function FriendSuggestions({
         <p className="mt-0.5 text-xs text-lb-steel">
           Mutual followers on Letterboxd — click to add to the watch party.
           {truncated && " (Large lists were partially scanned.)"}
+          {stale && " Showing cached results while a refresh runs."}
         </p>
       </div>
 
       {loading && (
-        <p className="text-sm text-lb-cloud">Loading their network…</p>
+        <p className="text-sm text-lb-cloud" role="status" aria-live="polite">
+          {status === "pending"
+            ? "Their network is queued and being fetched…"
+            : "Loading their network…"}
+        </p>
       )}
 
       {error && (
-        <p className="text-sm text-lb-star" role="alert">
-          {error}
-        </p>
+        <div className="flex flex-wrap items-center gap-3" role="alert">
+          <p className="text-sm text-lb-star">{error}</p>
+          {recoverable && (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="rounded border border-lb-star/50 px-2.5 py-1 text-xs font-medium text-lb-star transition hover:bg-lb-shadow"
+            >
+              Try again
+            </button>
+          )}
+        </div>
       )}
 
       {!loading && !error && availableMutuals.length > 0 && (

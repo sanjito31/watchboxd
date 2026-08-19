@@ -3,6 +3,7 @@ import {
   FETCH_TIMEOUT_MS,
   USER_AGENT,
 } from "./constants";
+import { ProviderError, ProviderNotFoundError } from "./providerErrors";
 
 export async function fetchHtml(url: string): Promise<string> {
   let lastError: Error | undefined;
@@ -28,16 +29,38 @@ export async function fetchHtml(url: string): Promise<string> {
       }
 
       if (!res.ok) {
-        throw new Error(`HTTP ${res.status} for ${url}`);
+        throw new ProviderError(
+          `Letterboxd request failed with HTTP ${res.status}`,
+          res.status === 429 ? "rate_limited" : "upstream_unavailable",
+          {
+            status: res.status,
+            retryAfterSeconds: parseRetryAfter(
+              res.headers.get("Retry-After")
+            ),
+          }
+        );
       }
 
       return await res.text();
     } catch (err) {
       if (err instanceof LetterboxdNotFoundError) throw err;
       lastError =
-        err instanceof Error ? err : new Error("Failed to fetch Letterboxd");
+        err instanceof ProviderError
+          ? err
+          : new ProviderError(
+              controller.signal.aborted
+                ? "Letterboxd request timed out"
+                : "Letterboxd request failed",
+              controller.signal.aborted ? "timeout" : "upstream_unavailable",
+              { cause: err }
+            );
       if (attempt < FETCH_RETRIES) {
-        await sleep(400 * (attempt + 1));
+        const retryDelayMs =
+          lastError instanceof ProviderError &&
+          lastError.retryAfterSeconds !== undefined
+            ? lastError.retryAfterSeconds * 1_000
+            : 400 * (attempt + 1);
+        await sleep(retryDelayMs);
       }
     } finally {
       clearTimeout(timeout);
@@ -47,13 +70,23 @@ export async function fetchHtml(url: string): Promise<string> {
   throw lastError ?? new Error("Failed to fetch Letterboxd");
 }
 
-export class LetterboxdNotFoundError extends Error {
+export class LetterboxdNotFoundError extends ProviderNotFoundError {
   constructor(url: string) {
-    super(`Not found: ${url}`);
+    super(`Not found: ${url}`, { status: 404 });
     this.name = "LetterboxdNotFoundError";
   }
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseRetryAfter(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds;
+
+  const date = Date.parse(value);
+  if (Number.isNaN(date)) return undefined;
+  return Math.max(0, Math.ceil((date - Date.now()) / 1_000));
 }

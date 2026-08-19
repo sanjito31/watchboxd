@@ -12,7 +12,7 @@ Add people by username or profile URL, scrape their public watchlists on the ser
 - **Friend suggestions** — after adding someone, browse their mutual followers and following list to add more people quickly
 - **Ranked overlap** — films sorted by overlap count (e.g. 4 of 5 watchlists), 10 per page
 - **Shareable links** — party saved in the URL (`?users=alice,bob`) and in `localStorage`
-- **Posters** — film thumbnails from Letterboxd’s CDN with fallbacks when URLs differ
+- **Posters** — TMDB-first artwork with ordered Letterboxd and local fallbacks
 
 ## Getting started
 
@@ -20,10 +20,30 @@ Requires [Node.js](https://nodejs.org/) 22+.
 
 ```bash
 npm install
+cp .env.example .env.local
 npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
+
+Fill `.env.local` with your own development credentials. Never commit that
+file. Vercel Queue authentication is provided by Vercel OIDC. The Queue SDK
+can exercise the real Queue service while the consumer callback runs in the
+local Next.js process. Link the repository to its Vercel project, configure
+the Development environment variables there, then start with:
+
+```bash
+npx vercel link
+npx vercel dev
+```
+
+Alternatively, `npx vercel env pull` provisions a short-lived
+`VERCEL_OIDC_TOKEN` for `npm run dev`; note that its default target is
+`.env.local`, so preserve or configure the existing local values first.
+
+This is not an offline queue emulator: sends still consume Queue operations
+and require Vercel authentication. Use a Preview deployment as the final test
+of deployed trigger discovery, concurrency, and retry behavior.
 
 ### Production build
 
@@ -43,7 +63,23 @@ npm test
 Prisma connects to Supabase using two server-only variables in `.env.local`:
 
 - `DATABASE_URL` uses the transaction-mode pooler for application queries.
-- `DIRECT_URL` uses the session-mode pooler for Prisma migrations and tooling.
+- `DIRECT_URL` uses a direct or session-mode connection for migrations and tooling.
+- `DATABASE_POOL_MAX` optionally sets the serverless pool size from 1–4
+  (default 2). Prisma sends unnamed statements for transaction-pool safety.
+
+Provider and API configuration is also server-only:
+
+- `TMDB_API_READ_TOKEN` is preferred; `TMDB_API_KEY` is the v3 fallback.
+- `API_ALLOWED_ORIGINS` is a comma-separated CORS allowlist.
+- `TEST_DATABASE_URL` must point to an isolated disposable database when
+  running database integration tests.
+
+Production database integration tests are intentionally opt-in. If the
+database is disposable and you explicitly intend to use `DATABASE_URL`, run:
+
+```bash
+ALLOW_PRODUCTION_DB_TESTS=true node --env-file=.env.local node_modules/vitest/vitest.mjs run lib/jobs/database.integration.test.ts
+```
 
 Useful commands:
 
@@ -72,13 +108,46 @@ Visit `http://localhost:3000/?fresh` once for a blank party without clearing sit
 
 ## How it works
 
-Letterboxd has no public API. This app fetches public HTML on the server (Next.js API routes + Cheerio), caches results in memory for ~20 minutes, and runs overlap logic in the browser.
+Letterboxd has no public API. Requests use the versioned API, which reads
+persistent snapshots from Supabase Postgres. Cache misses and stale resources
+create idempotent `ScrapeJob` rows and publish a minimal message to the
+`scrape-jobs-v1` Vercel Queue topic. The private Node.js consumer scrapes
+Letterboxd, enriches movies through TMDB, and atomically replaces each
+snapshot. The browser follows `202 Accepted` job descriptors and computes no
+overlap locally.
 
 | Route | Purpose |
 |-------|---------|
-| `GET /api/watchlist/[username]` | Scrape a user’s watchlist |
-| `GET /api/network/[username]` | Following / followers → mutuals |
-| `GET /api/poster/[slug]` | Poster URL fallback from film page |
+| `GET /api/v1/users/{username}` | Cached profile or profile job |
+| `GET /api/v1/users/{username}/watchlist` | Paginated watchlist |
+| `GET /api/v1/users/{username}/watched` | Paginated deduplicated watched titles |
+| `GET /api/v1/users/{username}/network` | Mutual and following network |
+| `GET /api/v1/movies/{letterboxdSlug}` | TMDB metadata, rating, and poster fallbacks |
+| `GET /api/v1/overlap?users=a,b` | Server-computed paginated overlap |
+| `GET /api/v1/jobs/{jobId}` | Pollable background-job status |
+
+Fresh responses return `200`; misses return `202` with `Location` and
+`Retry-After`; stale snapshots return immediately with a refresh job.
+
+## Deployment checklist
+
+1. Rotate any previously exposed Supabase database password before rollout.
+2. Configure `DATABASE_URL`, `DIRECT_URL`, `DATABASE_POOL_MAX`,
+   `TMDB_API_READ_TOKEN`, `TMDB_API_KEY`, and `API_ALLOWED_ORIGINS` separately
+   for Preview and Production.
+3. From a trusted environment, run `npm run db:deploy` with the intended
+   `DIRECT_URL`. Never run `db push` for this schema.
+4. Deploy `vercel.json` to register the private `queue/v2beta` consumer. Set
+   the `scrape-jobs-v1` consumer-group maximum concurrency to **4** in Vercel
+   Queue settings/API; the JavaScript trigger schema does not accept
+   `maxConcurrency`.
+5. Confirm Fluid Compute is enabled and the consumer has a five-minute maximum
+   duration.
+6. Add a Vercel WAF rate-limit rule for `/api/v1/*`: initially 120 requests per
+   minute per IP.
+7. On Preview, verify miss → Queue → consumer → Supabase → poll → `200`, then
+   inspect retries, oldest-message age, function duration, and database usage
+   before promoting to Production.
 
 ## Stack
 
@@ -90,4 +159,7 @@ Letterboxd has no public API. This app fetches public HTML on the server (Next.j
 
 - Watchlists and networks must be **public** on Letterboxd.
 - Scraping is best-effort; heavy use or markup changes may cause failures.
+- Network scans are bounded (20 following pages and 40 follower pages). The
+  frozen database model stores resulting edges but not a separate truncation
+  flag, so follower-only truncation can be under-reported after persistence.
 - For personal / non-commercial use; respect Letterboxd’s terms and rate limits.

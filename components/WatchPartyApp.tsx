@@ -1,26 +1,35 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AddMemberForm } from "./AddMemberForm";
+import {
+  AddMemberForm,
+  type AddMemberExternalError,
+} from "./AddMemberForm";
 import { PartyRoster } from "./PartyRoster";
 import { FilmList } from "./FilmList";
 import { FriendSuggestions } from "./FriendSuggestions";
 import { OverlapPagination } from "./OverlapPagination";
 import { useWatchParty } from "@/lib/hooks/useWatchParty";
-import {
-  computeRankedOverlap,
-  MIN_OVERLAP_COUNT,
-  paginate,
-} from "@/lib/intersection";
-import { parseUsername } from "@/lib/letterboxd/parseUsername";
+import { useV1Resource } from "@/lib/hooks/useV1Resource";
 import { OVERLAP_PAGE_SIZE } from "@/lib/ui-constants";
 import type {
-  Film,
-  NetworkResponse,
-  UserNetworkState,
-  UserWatchlist,
-  WatchlistResponse,
-} from "@/lib/types";
+  ApiJobSummary,
+  NetworkDto,
+  OverlapDto,
+  ProfileSummaryDto,
+} from "@/lib/api/contracts";
+import type {
+  AsyncResourceStatus,
+  MemberLoadState,
+  PartyMember,
+} from "@/lib/hooks/ui-types";
+
+const MIN_OVERLAP_COUNT = 2;
+
+interface OverlapRequest {
+  users: string[];
+  page: number;
+}
 
 export function WatchPartyApp() {
   const {
@@ -33,233 +42,134 @@ export function WatchPartyApp() {
     maxPartySize,
   } = useWatchParty();
 
-  const [watchlists, setWatchlists] = useState<Map<string, UserWatchlist>>(
-    new Map()
-  );
-  const [hasFetched, setHasFetched] = useState(false);
-  const [overlapPage, setOverlapPage] = useState(1);
+  const [overlapRequest, setOverlapRequest] =
+    useState<OverlapRequest | null>(null);
   const [copyOk, setCopyOk] = useState(false);
+  const [profileValidationError, setProfileValidationError] =
+    useState<AddMemberExternalError | null>(null);
   const [suggestionsSource, setSuggestionsSource] = useState<string | null>(
     null
   );
-  const [networkByUser, setNetworkByUser] = useState<
-    Map<string, UserNetworkState>
-  >(new Map());
 
-  const fetchNetwork = useCallback(async (username: string) => {
-    setNetworkByUser((prev) => {
-      const next = new Map(prev);
-      next.set(username, {
-        loading: true,
-        mutuals: [],
-        following: [],
-      });
-      return next;
+  const networkUrl = suggestionsSource
+    ? `/api/v1/users/${encodeURIComponent(suggestionsSource)}/network`
+    : null;
+  const network = useV1Resource<NetworkDto>(networkUrl);
+
+  useEffect(() => {
+    const profile = network.data?.user;
+    if (!profile) return;
+    updateMember(profile.username, {
+      displayName: profile.displayName ?? undefined,
+      avatarUrl: profile.avatarUrl ?? undefined,
     });
+  }, [network.data?.user, updateMember]);
 
-    try {
-      const res = await fetch(
-        `/api/network/${encodeURIComponent(username)}`
-      );
-      const data = (await res.json()) as NetworkResponse & { error?: string };
-
-      if (!res.ok) {
-        throw new Error(data.error ?? "Failed to load network");
-      }
-
-      setNetworkByUser((prev) => {
-        const next = new Map(prev);
-        next.set(username, {
-          loading: false,
-          mutuals: data.mutuals,
-          following: data.following,
-          truncated: data.truncated,
-        });
-        return next;
-      });
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Failed to load network";
-      setNetworkByUser((prev) => {
-        const next = new Map(prev);
-        next.set(username, {
-          loading: false,
-          mutuals: [],
-          following: [],
-          error: message,
-        });
-        return next;
-      });
+  const overlapUrl = useMemo(() => {
+    if (!overlapRequest || overlapRequest.users.length < MIN_OVERLAP_COUNT) {
+      return null;
     }
+    const params = new URLSearchParams({
+      users: overlapRequest.users.join(","),
+      page: String(overlapRequest.page),
+      pageSize: String(OVERLAP_PAGE_SIZE),
+    });
+    return `/api/v1/overlap?${params.toString()}`;
+  }, [overlapRequest]);
+  const overlap = useV1Resource<OverlapDto>(overlapUrl);
+
+  const resetOverlap = useCallback(() => {
+    setOverlapRequest(null);
   }, []);
 
-  const selectSuggestionsSource = useCallback(
-    (username: string) => {
-      setSuggestionsSource(username);
-      setNetworkByUser((prev) => {
-        const existing = prev.get(username);
-        if (existing?.loading) return prev;
-        if (existing && !existing.error) return prev;
-        void fetchNetwork(username);
-        return prev;
+  const selectSuggestionsSource = useCallback((username: string) => {
+    setSuggestionsSource(username);
+  }, []);
+
+  const handleProfileLoaded = useCallback(
+    (profile: ProfileSummaryDto) => {
+      updateMember(profile.username, {
+        displayName: profile.displayName,
+        avatarUrl: profile.avatarUrl,
       });
     },
-    [fetchNetwork]
+    [updateMember]
+  );
+
+  const handleProfileNotFound = useCallback(
+    (username: string) => {
+      removeMember(username);
+      resetOverlap();
+      setSuggestionsSource((current) =>
+        current === username ? null : current
+      );
+      setProfileValidationError({
+        input: username,
+        message: `No Letterboxd user was found for @${username}. Check the username and try again.`,
+      });
+    },
+    [removeMember, resetOverlap]
+  );
+
+  const profileByUsername = useMemo(
+    () => {
+      const profiles = overlap.data?.users ?? [];
+      const selectedProfile = network.data?.user;
+      return new Map(
+        [
+          ...profiles,
+          ...(selectedProfile ? [selectedProfile] : []),
+        ].map((profile) => [profile.username, profile])
+      );
+    },
+    [network.data?.user, overlap.data]
+  );
+
+  const enrichedMembers = useMemo(
+    () =>
+      members.map((member) => {
+        const profile = profileByUsername.get(member.username);
+        return profile ? mergeProfile(member, profile) : member;
+      }),
+    [members, profileByUsername]
   );
 
   const handleAddMember = useCallback(
     (input: string) => {
+      setProfileValidationError(null);
       const err = addMember(input);
       if (!err) {
-        const username = parseUsername(input);
-        if (username) {
-          selectSuggestionsSource(username);
-        }
+        resetOverlap();
+        setSuggestionsSource(null);
       }
       return err;
     },
-    [addMember, selectSuggestionsSource]
+    [addMember, resetOverlap]
   );
 
   const handleAddSuggestion = useCallback(
-    (username: string) => addMember(username),
-    [addMember]
+    (username: string) => {
+      const error = addMember(username);
+      if (!error) resetOverlap();
+      return error;
+    },
+    [addMember, resetOverlap]
   );
-
-  const fetchWatchlists = useCallback(async () => {
-    if (members.length === 0) return;
-
-    setHasFetched(true);
-    const usernames = members.map((m) => m.username);
-
-    setWatchlists((prev) => {
-      const next = new Map(prev);
-      for (const u of usernames) {
-        const existing = next.get(u);
-        next.set(u, {
-          member: members.find((m) => m.username === u)!,
-          films: existing?.films ?? [],
-          loading: true,
-          error: undefined,
-        });
-      }
-      return next;
-    });
-
-    await Promise.all(
-      usernames.map(async (username) => {
-        try {
-          const res = await fetch(`/api/watchlist/${encodeURIComponent(username)}`);
-          const data = (await res.json()) as WatchlistResponse & {
-            error?: string;
-          };
-
-          if (!res.ok) {
-            throw new Error(data.error ?? "Failed to load watchlist");
-          }
-
-          updateMember(username, {
-            displayName: data.displayName,
-            avatarUrl: data.avatarUrl,
-          });
-
-          setWatchlists((prev) => {
-            const next = new Map(prev);
-            next.set(username, {
-              member: {
-                username,
-                displayName: data.displayName,
-                avatarUrl: data.avatarUrl,
-              },
-              films: data.films,
-              loading: false,
-            });
-            return next;
-          });
-        } catch (err) {
-          const message =
-            err instanceof Error ? err.message : "Failed to load watchlist";
-          setWatchlists((prev) => {
-            const next = new Map(prev);
-            next.set(username, {
-              member: members.find((m) => m.username === username)!,
-              films: [],
-              loading: false,
-              error: message,
-            });
-            return next;
-          });
-        }
-      })
-    );
-  }, [members, updateMember]);
 
   const handleRemoveMember = useCallback(
     (username: string) => {
-      const remaining = members.filter((m) => m.username !== username);
       removeMember(username);
-      setWatchlists((prev) => {
-        const next = new Map(prev);
-        next.delete(username);
-        return next;
-      });
+      resetOverlap();
       if (suggestionsSource === username) {
-        setSuggestionsSource(remaining[0]?.username ?? null);
+        setSuggestionsSource(null);
       }
     },
-    [removeMember, suggestionsSource, members]
+    [removeMember, resetOverlap, suggestionsSource]
   );
 
-  const allWatchlistsReady = useMemo(
-    () =>
-      members.length > 0 &&
-      members.every((m) => {
-        const wl = watchlists.get(m.username);
-        return wl && !wl.loading && !wl.error;
-      }),
-    [members, watchlists]
-  );
-
-  const filmMaps = useMemo(() => {
-    const map = new Map<string, Film[]>();
-    for (const m of members) {
-      const wl = watchlists.get(m.username);
-      if (wl && !wl.loading && !wl.error) {
-        map.set(m.username, wl.films);
-      }
-    }
-    return map;
-  }, [members, watchlists]);
-
-  const enrichedMembers = useMemo(
-    () =>
-      members.map((m) => {
-        const wl = watchlists.get(m.username);
-        return wl?.member ?? m;
-      }),
-    [members, watchlists]
-  );
-
-  const allRankedOverlap = useMemo(() => {
-    if (!hasFetched || !allWatchlistsReady) return [];
-    if (members.length < MIN_OVERLAP_COUNT) return [];
-
-    return computeRankedOverlap(filmMaps, enrichedMembers);
-  }, [hasFetched, allWatchlistsReady, filmMaps, enrichedMembers, members.length]);
-
-  const overlapPageData = useMemo(
-    () => paginate(allRankedOverlap, overlapPage, OVERLAP_PAGE_SIZE),
-    [allRankedOverlap, overlapPage]
-  );
-
-  const memberKey = members.map((m) => m.username).join(",");
-
-  useEffect(() => {
-    setOverlapPage(1);
-  }, [memberKey, hasFetched]);
-
-  const isLoading = [...watchlists.values()].some((w) => w.loading);
-  const loadErrors = [...watchlists.entries()].filter(([, w]) => w.error);
+  const isLoading =
+    overlap.status === "loading" || overlap.status === "pending";
+  const hasFetched = overlapRequest !== null;
 
   const partyUsernames = useMemo(
     () => new Set(members.map((m) => m.username)),
@@ -275,9 +185,24 @@ export function WatchPartyApp() {
     [suggestionsSource, enrichedMembers, members]
   );
 
-  const activeNetwork = suggestionsSource
-    ? networkByUser.get(suggestionsSource)
-    : undefined;
+  const statusByUsername = useMemo(() => {
+    const result = new Map<string, MemberLoadState>();
+    for (const member of members) {
+      result.set(
+        member.username,
+        memberStatus(member.username, overlap.status, overlap.jobs)
+      );
+    }
+    return result;
+  }, [members, overlap.jobs, overlap.status]);
+
+  const partialFilms =
+    overlap.data?.films.filter(
+      (film) => film.resolutionStatus !== "resolved"
+    ) ?? [];
+  const pendingFilms = partialFilms.filter(
+    (film) => film.resolutionStatus === "pending"
+  );
 
   async function handleCopyLink() {
     const ok = await copyShareLink();
@@ -287,11 +212,20 @@ export function WatchPartyApp() {
 
   function handleClearParty() {
     clearParty();
-    setWatchlists(new Map());
-    setNetworkByUser(new Map());
     setSuggestionsSource(null);
-    setHasFetched(false);
-    setOverlapPage(1);
+    setProfileValidationError(null);
+    resetOverlap();
+  }
+
+  function handleFindOverlap() {
+    setOverlapRequest({
+      users: members.map((member) => member.username),
+      page: 1,
+    });
+  }
+
+  function handlePageChange(page: number) {
+    setOverlapRequest((current) => (current ? { ...current, page } : current));
   }
 
   return (
@@ -310,35 +244,49 @@ export function WatchPartyApp() {
         <h2 className="text-sm font-medium uppercase tracking-wide text-lb-steel">
           Watch party
         </h2>
-        <AddMemberForm onAdd={handleAddMember} disabled={isLoading} />
+        <AddMemberForm
+          onAdd={handleAddMember}
+          disabled={isLoading}
+          externalError={profileValidationError}
+          onExternalErrorDismiss={() => setProfileValidationError(null)}
+        />
         <PartyRoster
           members={enrichedMembers}
-          watchlists={watchlists}
+          statusByUsername={statusByUsername}
           suggestionsSource={suggestionsSource}
           onSelectForSuggestions={selectSuggestionsSource}
+          onProfileLoaded={handleProfileLoaded}
+          onProfileNotFound={handleProfileNotFound}
           onRemove={handleRemoveMember}
         />
         {suggestionsMember && suggestionsSource && (
           <FriendSuggestions
             sourceMember={suggestionsMember}
-            mutuals={activeNetwork?.mutuals ?? []}
-            following={activeNetwork?.following ?? []}
-            loading={!activeNetwork || activeNetwork.loading}
-            error={activeNetwork?.error}
-            truncated={activeNetwork?.truncated}
+            mutuals={network.data?.mutuals ?? []}
+            following={network.data?.following ?? []}
+            status={network.status}
+            error={network.error?.message}
+            recoverable={network.error?.recoverable}
+            stale={network.meta?.cache === "stale"}
+            truncated={network.data?.truncated}
             partyUsernames={partyUsernames}
             onAdd={handleAddSuggestion}
+            onRetry={network.retry}
             partyFull={members.length >= maxPartySize}
           />
         )}
         <div className="flex flex-wrap gap-3">
           <button
             type="button"
-            onClick={() => void fetchWatchlists()}
+            onClick={handleFindOverlap}
             disabled={members.length === 0 || isLoading}
             className="rounded-lg bg-lb-green px-5 py-2.5 font-medium text-lb-white transition hover:bg-lb-green-hover disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {isLoading ? "Fetching watchlists…" : "Find overlap"}
+            {overlap.status === "pending"
+              ? "Preparing watchlists…"
+              : overlap.status === "loading"
+                ? "Finding overlap…"
+                : "Find overlap"}
           </button>
           <button
             type="button"
@@ -360,23 +308,26 @@ export function WatchPartyApp() {
         </div>
       </section>
 
-      {loadErrors.length > 0 && (
+      {overlap.status === "error" && (
         <div
           className="rounded-lg border border-lb-star/40 bg-lb-charcoal px-4 py-3 text-sm text-lb-star"
           role="alert"
         >
-          <p className="font-medium">Could not load some watchlists:</p>
-          <ul className="mt-1 list-inside list-disc">
-            {loadErrors.map(([user, wl]) => (
-              <li key={user}>
-                @{user}: {wl.error}
-              </li>
-            ))}
-          </ul>
+          <p className="font-medium">Could not load the overlap.</p>
+          <p className="mt-1">{overlap.error?.message}</p>
+          {overlap.error?.recoverable && (
+            <button
+              type="button"
+              onClick={overlap.retry}
+              className="mt-3 rounded border border-lb-star/50 px-3 py-1.5 text-xs font-medium transition hover:bg-lb-shadow"
+            >
+              Try again
+            </button>
+          )}
         </div>
       )}
 
-      {hasFetched && members.length > 0 && !isLoading && loadErrors.length === 0 && (
+      {hasFetched && members.length > 0 && (
         <section className="space-y-4">
           <div>
             <h2 className="text-sm font-medium uppercase tracking-wide text-lb-steel">
@@ -392,20 +343,106 @@ export function WatchPartyApp() {
             <p className="rounded-xl border border-dashed border-lb-ocean px-6 py-8 text-center text-sm text-lb-cloud">
               Add at least {MIN_OVERLAP_COUNT} members to compare watchlists.
             </p>
-          ) : (
+          ) : isLoading ? (
+            <div
+              className="rounded-xl border border-lb-shadow bg-lb-charcoal px-6 py-8 text-center"
+              role="status"
+              aria-live="polite"
+            >
+              <p className="font-medium text-lb-porcelain">
+                {overlap.status === "pending"
+                  ? "Preparing watchlists and movie details…"
+                  : "Checking everyone’s watchlists…"}
+              </p>
+              <p className="mt-1 text-sm text-lb-cloud">
+                This can take a few minutes the first time. You can keep this
+                page open while the background jobs finish.
+              </p>
+            </div>
+          ) : overlap.status === "success" && overlap.data ? (
             <>
+              {overlap.meta?.cache === "stale" && (
+                <div
+                  className="rounded-lg border border-lb-ocean bg-lb-charcoal px-4 py-3 text-sm text-lb-cloud"
+                  role="status"
+                >
+                  Showing cached results while fresh data is prepared.
+                  <button
+                    type="button"
+                    onClick={overlap.retry}
+                    className="ml-2 font-medium text-lb-vivid hover:underline"
+                  >
+                    Check for updates
+                  </button>
+                </div>
+              )}
+              {partialFilms.length > 0 && (
+                <div
+                  className="rounded-lg border border-lb-ocean bg-lb-charcoal px-4 py-3 text-sm text-lb-cloud"
+                  role="status"
+                >
+                  {pendingFilms.length > 0
+                    ? `${pendingFilms.length} ${
+                        pendingFilms.length === 1 ? "film is" : "films are"
+                      } still being enriched.`
+                    : "Some films have limited metadata."}{" "}
+                  Available titles and poster fallbacks are shown now.
+                  {pendingFilms.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={overlap.retry}
+                      className="ml-2 font-medium text-lb-vivid hover:underline"
+                    >
+                      Refresh details
+                    </button>
+                  )}
+                </div>
+              )}
               <OverlapPagination
-                page={overlapPageData.page}
-                totalPages={overlapPageData.totalPages}
-                total={overlapPageData.total}
-                showing={overlapPageData.items.length}
-                onPageChange={setOverlapPage}
+                page={overlap.data.pagination.page}
+                totalPages={overlap.data.pagination.totalPages}
+                total={overlap.data.pagination.total}
+                showing={overlap.data.films.length}
+                onPageChange={handlePageChange}
               />
-              <FilmList films={overlapPageData.items} />
+              <FilmList films={overlap.data.films} />
             </>
-          )}
+          ) : null}
         </section>
       )}
     </div>
   );
+}
+
+function mergeProfile(
+  member: PartyMember,
+  profile: ProfileSummaryDto
+): PartyMember {
+  return {
+    ...member,
+    displayName: profile.displayName,
+    avatarUrl: profile.avatarUrl,
+  };
+}
+
+function memberStatus(
+  username: string,
+  status: AsyncResourceStatus,
+  jobs: ApiJobSummary[]
+): MemberLoadState {
+  if (status === "loading") return { status, label: "Checking…" };
+  if (status === "error") return { status, label: "Retry needed" };
+  if (status === "success") return { status, label: "Compared" };
+  if (status !== "pending") return { status: "idle" };
+
+  const watchlistJob = jobs.find(
+    (job) => job.resourceKey === `watchlist:${username}`
+  );
+  if (!watchlistJob) {
+    return { status: "success", label: "Watchlist ready" };
+  }
+  return {
+    status: "pending",
+    label: watchlistJob.status === "running" ? "Scraping…" : "Queued…",
+  };
 }

@@ -12,3 +12,193 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+// Migration strategy frozen for Agent A:
+// - Generate the initial Prisma migration from this schema; do not use db push.
+// - Add the partial unique index below by hand because Prisma cannot express it:
+//   CREATE UNIQUE INDEX "ScrapeJob_one_active_per_resource"
+//   ON "ScrapeJob" ("environment", "type", "resourceKey")
+//   WHERE "status" IN ('queued', 'running');
+// - Enable RLS on every table with no public policies and revoke all privileges
+//   from anon/authenticated. Prisma remains the only runtime database path.
+// - Keep the model, enum, column, and explicit index names in this file stable.
+
+enum MovieResolutionStatus {
+  PENDING    @map("pending")
+  RESOLVED   @map("resolved")
+  UNRESOLVED @map("unresolved")
+  AMBIGUOUS  @map("ambiguous")
+}
+
+enum NetworkRelationship {
+  MUTUAL    @map("mutual")
+  FOLLOWING @map("following")
+}
+
+enum JobEnvironment {
+  DEVELOPMENT @map("development")
+  PREVIEW     @map("preview")
+  PRODUCTION  @map("production")
+}
+
+enum ScrapeJobType {
+  PROFILE   @map("profile")
+  WATCHLIST @map("watchlist")
+  WATCHED   @map("watched")
+  NETWORK   @map("network")
+  MOVIE     @map("movie")
+}
+
+enum ScrapeJobStatus {
+  QUEUED    @map("queued")
+  RUNNING   @map("running")
+  SUCCEEDED @map("succeeded")
+  FAILED    @map("failed")
+}
+
+enum ScrapeJobFailureCode {
+  INVALID_INPUT        @map("invalid_input")
+  NOT_FOUND            @map("not_found")
+  UPSTREAM_UNAVAILABLE @map("upstream_unavailable")
+  RATE_LIMITED         @map("rate_limited")
+  TIMEOUT              @map("timeout")
+  PARSE_ERROR          @map("parse_error")
+  ATTEMPTS_EXHAUSTED   @map("attempts_exhausted")
+  UNKNOWN              @map("unknown")
+}
+
+model LetterboxdUser {
+  id          BigInt  @id @default(autoincrement())
+  username    String  @unique(map: "LetterboxdUser_username_key")
+  displayName String?
+  avatarUrl   String?
+
+  profileFetchedAt   DateTime? @db.Timestamptz(3)
+  profileStaleAt     DateTime? @db.Timestamptz(3)
+  watchlistFetchedAt DateTime? @db.Timestamptz(3)
+  watchlistStaleAt   DateTime? @db.Timestamptz(3)
+  watchedFetchedAt   DateTime? @db.Timestamptz(3)
+  watchedStaleAt     DateTime? @db.Timestamptz(3)
+  networkFetchedAt   DateTime? @db.Timestamptz(3)
+  networkStaleAt     DateTime? @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  watchlistItems     WatchlistItem[]
+  watchedItems       WatchedItem[]
+  ownedNetworkEdges  NetworkEdge[]   @relation("NetworkEdgeOwner")
+  memberNetworkEdges NetworkEdge[]   @relation("NetworkEdgeMember")
+}
+
+model Movie {
+  id                   BigInt                @id @default(autoincrement())
+  letterboxdSlug       String                @unique(map: "Movie_letterboxdSlug_key")
+  letterboxdFilmId     Int?                  @unique(map: "Movie_letterboxdFilmId_key")
+  tmdbId               Int?                  @unique(map: "Movie_tmdbId_key")
+  resolutionStatus     MovieResolutionStatus @default(PENDING)
+  title                String
+  year                 Int?
+  tmdbTitle            String?
+  tmdbOriginalTitle    String?
+  tmdbOverview         String?
+  tmdbReleaseDate      DateTime?             @db.Date
+  tmdbRuntimeMinutes   Int?
+  tmdbGenres           String[]              @default([])
+  tmdbVoteAverage      Float?
+  tmdbPosterPath       String?
+  tmdbBackdropPath     String?
+  letterboxdPosterUrls String[]              @default([])
+  letterboxdRating     Float?
+
+  tmdbFetchedAt       DateTime? @db.Timestamptz(3)
+  tmdbStaleAt         DateTime? @db.Timestamptz(3)
+  letterboxdFetchedAt DateTime? @db.Timestamptz(3)
+  letterboxdStaleAt   DateTime? @db.Timestamptz(3)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  watchlistItems WatchlistItem[]
+  watchedItems   WatchedItem[]
+
+  @@index([resolutionStatus], map: "Movie_resolutionStatus_idx")
+}
+
+model WatchlistItem {
+  id               BigInt                @id @default(autoincrement())
+  userId           BigInt
+  movieId          BigInt
+  position         Int
+  sourceTitle      String
+  sourceSlug       String
+  sourceYear       Int?
+  resolutionStatus MovieResolutionStatus @default(PENDING)
+  createdAt        DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime              @updatedAt @db.Timestamptz(3)
+
+  user  LetterboxdUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  movie Movie          @relation(fields: [movieId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, movieId], map: "WatchlistItem_userId_movieId_key")
+  @@index([userId, position], map: "WatchlistItem_userId_position_idx")
+  @@index([movieId, userId], map: "WatchlistItem_movieId_userId_idx")
+}
+
+model WatchedItem {
+  id               BigInt                @id @default(autoincrement())
+  userId           BigInt
+  movieId          BigInt
+  position         Int
+  sourceTitle      String
+  sourceSlug       String
+  sourceYear       Int?
+  resolutionStatus MovieResolutionStatus @default(PENDING)
+  createdAt        DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime              @updatedAt @db.Timestamptz(3)
+
+  user  LetterboxdUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  movie Movie          @relation(fields: [movieId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, movieId], map: "WatchedItem_userId_movieId_key")
+  @@index([userId, position], map: "WatchedItem_userId_position_idx")
+  @@index([movieId, userId], map: "WatchedItem_movieId_userId_idx")
+}
+
+model NetworkEdge {
+  id           BigInt              @id @default(autoincrement())
+  ownerId      BigInt
+  memberId     BigInt
+  relationship NetworkRelationship
+  position     Int
+  displayName  String?
+  avatarUrl    String?
+  createdAt    DateTime            @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime            @updatedAt @db.Timestamptz(3)
+
+  owner  LetterboxdUser @relation("NetworkEdgeOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  member LetterboxdUser @relation("NetworkEdgeMember", fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, memberId], map: "NetworkEdge_ownerId_memberId_key")
+  @@index([ownerId, relationship, position], map: "NetworkEdge_ownerId_relationship_position_idx")
+  @@index([memberId], map: "NetworkEdge_memberId_idx")
+}
+
+model ScrapeJob {
+  id             String                @id @default(uuid()) @db.Uuid
+  environment    JobEnvironment
+  type           ScrapeJobType
+  resourceKey    String
+  status         ScrapeJobStatus       @default(QUEUED)
+  attempts       Int                   @default(0)
+  queueMessageId String?               @unique(map: "ScrapeJob_queueMessageId_key")
+  errorCode      ScrapeJobFailureCode?
+  errorMessage   String?
+  startedAt      DateTime?             @db.Timestamptz(3)
+  finishedAt     DateTime?             @db.Timestamptz(3)
+  createdAt      DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime              @updatedAt @db.Timestamptz(3)
+
+  @@index([environment, type, resourceKey], map: "ScrapeJob_identity_idx")
+  @@index([status, createdAt], map: "ScrapeJob_status_createdAt_idx")
+}
