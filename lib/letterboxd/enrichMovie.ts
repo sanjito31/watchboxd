@@ -83,8 +83,11 @@ export async function enrichMovie(
 
   const letterboxdFilmId =
     input.letterboxdFilmId ?? filmPage.letterboxdFilmId ?? null;
+  // Letterboxd's outbound TMDB link is authoritative for Letterboxd-originated
+  // movies. Persisted/direct IDs remain a fallback for legacy rows and TMDB-
+  // originated lookups whose film page does not expose the link.
   const directTmdbId =
-    input.directTmdbId ?? input.tmdbId ?? filmPage.tmdbId ?? null;
+    filmPage.tmdbId ?? input.directTmdbId ?? input.tmdbId ?? null;
   if (
     directTmdbId !== null &&
     (!Number.isSafeInteger(directTmdbId) || directTmdbId <= 0)

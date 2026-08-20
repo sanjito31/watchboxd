@@ -46,6 +46,8 @@ export type CanonicalResourceKey<TType extends JobType = JobType> =
   `${TType}:${string}`;
 
 const RESOURCE_IDENTIFIER_PATTERN = /^[a-z0-9_-]+$/;
+const JOB_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /**
  * Builds the semantic job key. Callers may pass mixed case, but must pass a
@@ -92,16 +94,23 @@ export function isJobStatus(value: string): value is JobStatus {
   return (JOB_STATUSES as readonly string[]).includes(value);
 }
 
+export function isJobId(value: unknown): value is string {
+  return typeof value === "string" && JOB_ID_PATTERN.test(value);
+}
+
 export function isScrapeQueueMessageV1(
   value: unknown
 ): value is ScrapeQueueMessageV1 {
   if (!value || typeof value !== "object") return false;
 
   const candidate = value as Partial<ScrapeQueueMessageV1>;
+  const keys = Object.keys(value).sort();
   return (
+    keys.length === 2 &&
+    keys[0] === "jobId" &&
+    keys[1] === "version" &&
     candidate.version === SCRAPE_QUEUE_MESSAGE_VERSION &&
-    typeof candidate.jobId === "string" &&
-    candidate.jobId.length > 0
+    isJobId(candidate.jobId)
   );
 }
 
