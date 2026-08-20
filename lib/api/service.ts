@@ -25,6 +25,7 @@ import {
   selectPoster,
   TMDB_IMAGE_BASE_URL,
 } from "@/lib/movies/posters";
+import { buildTmdbMovieJobIdentifier } from "@/lib/movies/jobIdentifier";
 import type {
   ApiRepository,
   CacheStamp,
@@ -139,8 +140,23 @@ export class ApiService {
     );
   }
 
-  async getMovie(slug: string): Promise<ResourceResult<MovieDto>> {
-    const movie = await this.repository.getMovie(slug);
+  async getMovie(tmdbId: number): Promise<ResourceResult<MovieDto>> {
+    const identifier = buildTmdbMovieJobIdentifier(tmdbId);
+    const movie = await this.repository.getMovieByTmdbId(tmdbId);
+    if (!movie) {
+      return this.missOrNotFound("movie", identifier);
+    }
+    const stamp = movieCacheStamp(movie);
+    if (classifyFreshness(stamp, this.now()) === "missing") {
+      return this.missOrNotFound("movie", identifier);
+    }
+    return this.cachedResource(toMovieDto(movie), stamp, "movie", identifier);
+  }
+
+  async getMovieByLetterboxdSlug(
+    slug: string
+  ): Promise<ResourceResult<MovieDto>> {
+    const movie = await this.repository.getMovieByLetterboxdSlug(slug);
     if (!movie) {
       return this.missOrNotFound("movie", slug);
     }

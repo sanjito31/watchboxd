@@ -4,6 +4,7 @@ import {
   enrichMovie,
   scrapeMemberNetwork,
   scrapeProfile,
+  resolveLetterboxdMovieByTmdbId,
   scrapeUserWatched,
   scrapeUserWatchlist,
   type MovieEnrichmentResult,
@@ -13,6 +14,7 @@ import {
   type ScrapeResult,
 } from "@/lib/letterboxd";
 import type { LetterboxdFilmGridItem } from "@/lib/letterboxd/types";
+import { parseMovieJobIdentifier } from "@/lib/movies/jobIdentifier";
 import { PermanentJobError } from "./contracts";
 import { parseCanonicalResourceKey, type JobType } from "./contracts";
 import type { JobRecord } from "./repository";
@@ -101,9 +103,14 @@ async function fetchMovieSnapshot(
   identifier: string
 ): Promise<MovieEnrichmentResult> {
   const { prisma } = await import("@/lib/prisma");
+  const parsedIdentifier = parseMovieJobIdentifier(identifier);
   const existing = await prisma.movie.findUnique({
-    where: { letterboxdSlug: identifier },
+    where:
+      parsedIdentifier.kind === "tmdb"
+        ? { tmdbId: parsedIdentifier.tmdbId }
+        : { letterboxdSlug: parsedIdentifier.letterboxdSlug },
     select: {
+      letterboxdSlug: true,
       title: true,
       year: true,
       letterboxdFilmId: true,
@@ -112,12 +119,31 @@ async function fetchMovieSnapshot(
     },
   });
 
+  if (parsedIdentifier.kind === "tmdb" && !existing) {
+    const resolved = await resolveLetterboxdMovieByTmdbId(
+      parsedIdentifier.tmdbId
+    );
+    return enrichMovie(
+      {
+        letterboxdSlug: resolved.letterboxdSlug,
+        directTmdbId: parsedIdentifier.tmdbId,
+      },
+      { fetchLetterboxdHtml: async () => resolved.html }
+    );
+  }
+
   return enrichMovie({
-    letterboxdSlug: identifier,
+    letterboxdSlug:
+      existing?.letterboxdSlug ??
+      (parsedIdentifier.kind === "letterboxd"
+        ? parsedIdentifier.letterboxdSlug
+        : identifier),
     sourceTitle: existing?.title,
     sourceYear: existing?.year,
     letterboxdFilmId: existing?.letterboxdFilmId,
-    directTmdbId: existing?.tmdbId,
+    directTmdbId:
+      existing?.tmdbId ??
+      (parsedIdentifier.kind === "tmdb" ? parsedIdentifier.tmdbId : null),
     letterboxdPosterUrls: existing?.letterboxdPosterUrls,
   });
 }

@@ -87,9 +87,9 @@ describe("ApiService", () => {
   it("honors recent negative not-found caching", async () => {
     const repository = new FakeRepository();
     const jobs = new FakeJobs();
-    jobs.negativeKeys.add("movie:missing-film");
+    jobs.negativeKeys.add("movie:tmdb_999");
 
-    const result = await service(repository, jobs).getMovie("missing-film");
+    const result = await service(repository, jobs).getMovie(999);
 
     expect(result).toEqual({
       error: {
@@ -97,8 +97,89 @@ describe("ApiService", () => {
         message: "The requested Letterboxd resource was not found",
       },
     });
-    expect(jobs.ensureCalls).toEqual(["movie:missing-film"]);
+    expect(jobs.ensureCalls).toEqual(["movie:tmdb_999"]);
     expect(jobs.activeJobs).toEqual([]);
+  });
+
+  it("returns a movie cached by TMDB ID without creating a job", async () => {
+    const repository = new FakeRepository();
+    repository.movies.set(157336, makeMovie("interstellar", { tmdbId: 157336 }));
+    const jobs = new FakeJobs();
+
+    const result = await service(repository, jobs).getMovie(157336);
+
+    expect(result).toMatchObject({
+      data: {
+        tmdbId: 157336,
+        letterboxdSlug: "interstellar",
+        letterboxdRating: null,
+      },
+      meta: { cache: "hit" },
+    });
+    expect(jobs.ensureCalls).toEqual([]);
+  });
+
+  it("refreshes a stale TMDB movie with the TMDB job identifier", async () => {
+    const repository = new FakeRepository();
+    repository.movies.set(
+      157336,
+      makeMovie("interstellar", {
+        tmdbId: 157336,
+        letterboxd: STALE,
+      })
+    );
+    const jobs = new FakeJobs();
+
+    const result = await service(repository, jobs).getMovie(157336);
+
+    expect(result).toMatchObject({
+      data: { tmdbId: 157336 },
+      meta: {
+        cache: "stale",
+        refreshJob: { resourceKey: "movie:tmdb_157336" },
+      },
+    });
+    expect(jobs.ensureCalls).toEqual(["movie:tmdb_157336"]);
+  });
+
+  it("returns a movie cached by Letterboxd slug without creating a job", async () => {
+    const repository = new FakeRepository();
+    repository.moviesBySlug.set(
+      "interstellar",
+      makeMovie("interstellar", { tmdbId: 157336 })
+    );
+    const jobs = new FakeJobs();
+
+    const result = await service(repository, jobs).getMovieByLetterboxdSlug(
+      "interstellar"
+    );
+
+    expect(result).toMatchObject({
+      data: {
+        tmdbId: 157336,
+        letterboxdSlug: "interstellar",
+      },
+      meta: { cache: "hit" },
+    });
+    expect(jobs.ensureCalls).toEqual([]);
+  });
+
+  it("queues the existing slug movie job on a fallback cache miss", async () => {
+    const jobs = new FakeJobs();
+
+    const result = await service(
+      new FakeRepository(),
+      jobs
+    ).getMovieByLetterboxdSlug("interstellar");
+
+    expect(result).toMatchObject({
+      data: null,
+      meta: {
+        cache: "miss",
+        jobs: [{ resourceKey: "movie:interstellar" }],
+      },
+    });
+    expect(jobs.ensureCalls).toEqual(["movie:interstellar"]);
   });
 
   it("maps a persisted queue publication failure to a public 503 envelope", async () => {
@@ -346,7 +427,8 @@ class FakeRepository implements ApiRepository {
   watchlists = new Map<string, UserListRecord>();
   watched = new Map<string, UserListRecord>();
   networks = new Map<string, NetworkRecord>();
-  movies = new Map<string, MovieRecord>();
+  movies = new Map<number, MovieRecord>();
+  moviesBySlug = new Map<string, MovieRecord>();
 
   async getUser(username: string) {
     return this.users.get(username) ?? null;
@@ -364,8 +446,12 @@ class FakeRepository implements ApiRepository {
     return this.networks.get(username) ?? null;
   }
 
-  async getMovie(slug: string) {
-    return this.movies.get(slug) ?? null;
+  async getMovieByTmdbId(tmdbId: number) {
+    return this.movies.get(tmdbId) ?? null;
+  }
+
+  async getMovieByLetterboxdSlug(slug: string) {
+    return this.moviesBySlug.get(slug) ?? null;
   }
 
   async getWatchlists(usernames: readonly string[]) {

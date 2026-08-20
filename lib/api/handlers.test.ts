@@ -6,6 +6,7 @@ const serviceMocks = vi.hoisted(() => ({
   getWatched: vi.fn(),
   getNetwork: vi.fn(),
   getMovie: vi.fn(),
+  getMovieByLetterboxdSlug: vi.fn(),
   getOverlap: vi.fn(),
   getJob: vi.fn(),
 }));
@@ -17,6 +18,8 @@ vi.mock("@/lib/api/runtime", () => ({
 import {
   OPTIONS,
   getJob,
+  getMovie,
+  getMovieByLetterboxdSlug,
   getOverlap,
   getProfile,
   getWatchlist,
@@ -117,6 +120,80 @@ describe("v1 route handlers", () => {
       },
     });
     expect(serviceMocks.getWatchlist).not.toHaveBeenCalled();
+  });
+
+  it("passes a validated TMDB ID to the movie service", async () => {
+    serviceMocks.getMovie.mockResolvedValue({
+      data: null,
+      meta: { cache: "miss", jobs: [job] },
+    });
+
+    const response = await getMovie(
+      request("https://api.example/api/v1/movies/157336"),
+      { params: Promise.resolve({ tmdbId: "157336" }) }
+    );
+
+    expect(response.status).toBe(202);
+    expect(serviceMocks.getMovie).toHaveBeenCalledWith(157336);
+  });
+
+  it("rejects a non-numeric movie path before service access", async () => {
+    const response = await getMovie(
+      request("https://api.example/api/v1/movies/interstellar"),
+      { params: Promise.resolve({ tmdbId: "interstellar" }) }
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({
+      error: {
+        code: "invalid_tmdb_id",
+        message: "TMDB movie ID must be a positive integer",
+      },
+    });
+    expect(serviceMocks.getMovie).not.toHaveBeenCalled();
+  });
+
+  it("rejects TMDB IDs that cannot fit the database integer column", async () => {
+    const response = await getMovie(
+      request("https://api.example/api/v1/movies/2147483648"),
+      { params: Promise.resolve({ tmdbId: "2147483648" }) }
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: { code: "invalid_tmdb_id" },
+    });
+    expect(serviceMocks.getMovie).not.toHaveBeenCalled();
+  });
+
+  it("normalizes a Letterboxd slug for the fallback movie endpoint", async () => {
+    serviceMocks.getMovieByLetterboxdSlug.mockResolvedValue({
+      data: null,
+      meta: { cache: "miss", jobs: [job] },
+    });
+
+    const response = await getMovieByLetterboxdSlug(
+      request("https://api.example/api/v1/movies/letterboxd/interstellar"),
+      { params: Promise.resolve({ letterboxdSlug: " Interstellar " }) }
+    );
+
+    expect(response.status).toBe(202);
+    expect(serviceMocks.getMovieByLetterboxdSlug).toHaveBeenCalledWith(
+      "interstellar"
+    );
+  });
+
+  it("rejects an invalid Letterboxd slug before service access", async () => {
+    const response = await getMovieByLetterboxdSlug(
+      request("https://api.example/api/v1/movies/letterboxd/bad%20slug"),
+      { params: Promise.resolve({ letterboxdSlug: "bad slug" }) }
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: { code: "invalid_movie_slug" },
+    });
+    expect(serviceMocks.getMovieByLetterboxdSlug).not.toHaveBeenCalled();
   });
 
   it("normalizes overlap users and enforces 2 to 10 unique users", async () => {

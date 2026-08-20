@@ -122,7 +122,8 @@ overlap locally.
 | `GET /api/v1/users/{username}/watchlist` | Paginated watchlist |
 | `GET /api/v1/users/{username}/watched` | Paginated deduplicated watched titles |
 | `GET /api/v1/users/{username}/network` | Mutual and following network |
-| `GET /api/v1/movies/{letterboxdSlug}` | TMDB metadata, rating, and poster fallbacks |
+| `GET /api/v1/movies/{tmdbId}` | Match a TMDB movie to Letterboxd, then return metadata, rating, and poster fallbacks |
+| `GET /api/v1/movies/letterboxd/{letterboxdSlug}` | Fallback movie lookup by Letterboxd slug |
 | `GET /api/v1/overlap?users=a,b` | Server-computed paginated overlap |
 | `GET /api/v1/jobs/{jobId}` | Pollable background-job status |
 

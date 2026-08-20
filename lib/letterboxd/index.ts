@@ -5,6 +5,7 @@ export * from "./parseFilmGridPage";
 export * from "./parseFilmPage";
 export * from "./parseUsername";
 export * from "./providerErrors";
+export * from "./resolveTmdbMovie";
 export * from "./scrapeFilmGrid";
 export * from "./scrapeNetwork";
 export * from "./scrapeProfile";

@@ -5,7 +5,16 @@ import {
 } from "./constants";
 import { ProviderError, ProviderNotFoundError } from "./providerErrors";
 
+export interface FetchedHtmlPage {
+  html: string;
+  url: string;
+}
+
 export async function fetchHtml(url: string): Promise<string> {
+  return (await fetchHtmlPage(url)).html;
+}
+
+export async function fetchHtmlPage(url: string): Promise<FetchedHtmlPage> {
   let lastError: Error | undefined;
 
   for (let attempt = 0; attempt <= FETCH_RETRIES; attempt++) {
@@ -41,7 +50,10 @@ export async function fetchHtml(url: string): Promise<string> {
         );
       }
 
-      return await res.text();
+      return {
+        html: await res.text(),
+        url: res.url || url,
+      };
     } catch (err) {
       if (err instanceof LetterboxdNotFoundError) throw err;
       lastError =

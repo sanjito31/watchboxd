@@ -94,7 +94,14 @@ export class PrismaApiRepository implements ApiRepository {
     };
   }
 
-  async getMovie(slug: string): Promise<MovieRecord | null> {
+  async getMovieByTmdbId(tmdbId: number): Promise<MovieRecord | null> {
+    const movie = await prisma.movie.findUnique({
+      where: { tmdbId },
+    });
+    return movie ? mapMovie(movie) : null;
+  }
+
+  async getMovieByLetterboxdSlug(slug: string): Promise<MovieRecord | null> {
     const movie = await prisma.movie.findUnique({
       where: { letterboxdSlug: slug },
     });
