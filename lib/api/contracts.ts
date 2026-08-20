@@ -17,6 +17,7 @@ export const API_ERROR_CODES = {
   INVALID_REQUEST: "invalid_request",
   INVALID_USERNAME: "invalid_username",
   INVALID_MOVIE_SLUG: "invalid_movie_slug",
+  INVALID_TMDB_ID: "invalid_tmdb_id",
   INVALID_PAGINATION: "invalid_pagination",
   INVALID_OVERLAP_USERS: "invalid_overlap_users",
   RESOURCE_NOT_FOUND: "resource_not_found",

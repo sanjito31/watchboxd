@@ -6,6 +6,7 @@ import {
   MAX_PAGE_SIZE,
   MIN_OVERLAP_USERS,
 } from "@/lib/api/contracts";
+import { MAX_TMDB_MOVIE_ID } from "@/lib/movies/jobIdentifier";
 
 const RESOURCE_IDENTIFIER_PATTERN = /^[a-z0-9_-]+$/;
 
@@ -14,6 +15,7 @@ export class ApiValidationError extends Error {
     readonly code:
       | "invalid_username"
       | "invalid_movie_slug"
+      | "invalid_tmdb_id"
       | "invalid_pagination"
       | "invalid_overlap_users",
     message: string
@@ -29,6 +31,24 @@ export function normalizeUsername(value: string): string {
 
 export function normalizeMovieSlug(value: string): string {
   return normalizeIdentifier(value, "invalid_movie_slug", "movie slug");
+}
+
+export function parseTmdbMovieId(value: string): number {
+  if (!/^[1-9]\d*$/.test(value)) {
+    throw new ApiValidationError(
+      "invalid_tmdb_id",
+      "TMDB movie ID must be a positive integer"
+    );
+  }
+
+  const tmdbId = Number(value);
+  if (!Number.isSafeInteger(tmdbId) || tmdbId > MAX_TMDB_MOVIE_ID) {
+    throw new ApiValidationError(
+      "invalid_tmdb_id",
+      `TMDB movie ID must be at most ${MAX_TMDB_MOVIE_ID}`
+    );
+  }
+  return tmdbId;
 }
 
 function normalizeIdentifier(

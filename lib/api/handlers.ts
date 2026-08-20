@@ -12,6 +12,7 @@ import {
   normalizeUsername,
   parseOverlapRequest,
   parsePagination,
+  parseTmdbMovieId,
 } from "@/lib/api/validation";
 
 type ParamContext<TKey extends string> = {
@@ -84,11 +85,26 @@ export async function getNetwork(
 
 export async function getMovie(
   request: Request,
+  { params }: ParamContext<"tmdbId">
+): Promise<Response> {
+  try {
+    const tmdbId = parseTmdbMovieId((await params).tmdbId);
+    return resourceResponse(request, await apiService.getMovie(tmdbId));
+  } catch (error) {
+    return handleRouteError(request, error);
+  }
+}
+
+export async function getMovieByLetterboxdSlug(
+  request: Request,
   { params }: ParamContext<"letterboxdSlug">
 ): Promise<Response> {
   try {
     const slug = normalizeMovieSlug((await params).letterboxdSlug);
-    return resourceResponse(request, await apiService.getMovie(slug));
+    return resourceResponse(
+      request,
+      await apiService.getMovieByLetterboxdSlug(slug)
+    );
   } catch (error) {
     return handleRouteError(request, error);
   }

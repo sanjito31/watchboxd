@@ -122,7 +122,8 @@ overlap locally.
 | `GET /api/v1/users/{username}/watchlist` | Paginated watchlist |
 | `GET /api/v1/users/{username}/watched` | Paginated deduplicated watched titles |
 | `GET /api/v1/users/{username}/network` | Mutual and following network |
-| `GET /api/v1/movies/{letterboxdSlug}` | TMDB metadata, rating, and poster fallbacks |
+| `GET /api/v1/movies/{tmdbId}` | Match a TMDB movie to Letterboxd, then return metadata, rating, and poster fallbacks |
+| `GET /api/v1/movies/letterboxd/{letterboxdSlug}` | Fallback movie lookup by Letterboxd slug |
 | `GET /api/v1/overlap?users=a,b` | Server-computed paginated overlap |
 | `GET /api/v1/jobs/{jobId}` | Pollable background-job status |
 
@@ -148,6 +149,17 @@ Fresh responses return `200`; misses return `202` with `Location` and
 7. On Preview, verify miss → Queue → consumer → Supabase → poll → `200`, then
    inspect retries, oldest-message age, function duration, and database usage
    before promoting to Production.
+
+Run the deployed API smoke test from this repository without a browser:
+
+```bash
+npm run api:smoke -- https://your-app.vercel.app letterboxd-username
+```
+
+The default checks the user profile and polls any `202` job until it finishes.
+Pass `network`, `watchlist`, `watched`, `all`, or a comma-separated selection as
+the final argument. Watchlist and watched checks print only the first five
+items.
 
 ## Stack
 

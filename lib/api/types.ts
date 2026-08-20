@@ -84,7 +84,8 @@ export interface ApiRepository {
   getWatchlist(username: string): Promise<UserListRecord | null>;
   getWatched(username: string): Promise<UserListRecord | null>;
   getNetwork(username: string): Promise<NetworkRecord | null>;
-  getMovie(slug: string): Promise<MovieRecord | null>;
+  getMovieByTmdbId(tmdbId: number): Promise<MovieRecord | null>;
+  getMovieByLetterboxdSlug(slug: string): Promise<MovieRecord | null>;
   getWatchlists(usernames: readonly string[]): Promise<UserListRecord[]>;
 }
 

@@ -96,7 +96,8 @@ The database constraint determines whether two requests are doing the same work.
 | `GET /api/v1/users/{username}/watchlist?page=1&pageSize=50` | Paginated watchlist, maximum page size 100 |
 | `GET /api/v1/users/{username}/watched?page=1&pageSize=50` | Deduplicated watched titles |
 | `GET /api/v1/users/{username}/network` | Existing grouped mutual/following result |
-| `GET /api/v1/movies/{letterboxdSlug}` | TMDB metadata/poster, Letterboxd rating, and Letterboxd poster fallbacks |
+| `GET /api/v1/movies/{tmdbId}` | Match TMDB to Letterboxd, then return metadata/poster, Letterboxd rating, and poster fallbacks |
+| `GET /api/v1/movies/letterboxd/{letterboxdSlug}` | Fallback movie lookup by Letterboxd slug |
 | `GET /api/v1/overlap?users=a,b&page=1&pageSize=10` | Server-computed overlap for 2–10 users |
 | `GET /api/v1/jobs/{jobId}` | Pollable job status |
 
