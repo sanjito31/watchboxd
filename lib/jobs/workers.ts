@@ -22,8 +22,32 @@ import type { JobRecord } from "./repository";
 export type PersistenceTransaction = Prisma.TransactionClient;
 
 const PERSISTENCE_BATCH_SIZE = 100;
+const MOVIE_ENRICHMENT_CONCURRENCY = 4;
 const MAX_FILM_SNAPSHOT_ITEMS = 5_000;
 const MAX_NETWORK_SNAPSHOT_MEMBERS = 1_500;
+
+export interface EnrichedFilmGridSnapshot extends ScrapeResult {
+  /** Movies fetched from Letterboxd and TMDB before the write transaction. */
+  enrichedMovies: MovieEnrichmentResult[];
+}
+
+export interface ExistingMovieEnrichmentState {
+  letterboxdSlug: string;
+  letterboxdFilmId: number | null;
+  tmdbId: number | null;
+  resolutionStatus: "PENDING" | "RESOLVED" | "UNRESOLVED" | "AMBIGUOUS";
+  letterboxdPosterUrls: string[];
+  letterboxdStaleAt: Date | null;
+  tmdbStaleAt: Date | null;
+}
+
+export interface FilmGridEnrichmentOptions {
+  findExistingMovies?: (
+    slugs: readonly string[]
+  ) => Promise<ExistingMovieEnrichmentState[]>;
+  enrich?: typeof enrichMovie;
+  concurrency?: number;
+}
 
 export interface SnapshotJobWorker<TSnapshot> {
   /** Performs all upstream I/O. This is always called before a DB transaction. */
@@ -38,8 +62,8 @@ export interface SnapshotJobWorker<TSnapshot> {
 
 export interface JobWorkerRegistry {
   profile: SnapshotJobWorker<ProfileInfo>;
-  watchlist: SnapshotJobWorker<ScrapeResult>;
-  watched: SnapshotJobWorker<WatchedScrapeResult>;
+  watchlist: SnapshotJobWorker<EnrichedFilmGridSnapshot>;
+  watched: SnapshotJobWorker<EnrichedFilmGridSnapshot>;
   network: SnapshotJobWorker<NetworkScrapeResult>;
   movie: SnapshotJobWorker<MovieEnrichmentResult>;
 }
@@ -79,12 +103,14 @@ export function createDefaultWorkerRegistry(): JobWorkerRegistry {
       persist: persistProfileSnapshot,
     },
     watchlist: {
-      fetch: scrapeUserWatchlist,
+      fetch: async (identifier) =>
+        enrichFilmGridSnapshot(await scrapeUserWatchlist(identifier)),
       persist: (transaction, snapshot) =>
         persistFilmGridSnapshot(transaction, snapshot, "watchlist"),
     },
     watched: {
-      fetch: scrapeUserWatched,
+      fetch: async (identifier) =>
+        enrichFilmGridSnapshot(await scrapeUserWatched(identifier)),
       persist: (transaction, snapshot) =>
         persistFilmGridSnapshot(transaction, snapshot, "watched"),
     },
@@ -97,6 +123,96 @@ export function createDefaultWorkerRegistry(): JobWorkerRegistry {
       persist: persistMovieSnapshot,
     },
   };
+}
+
+/**
+ * Eagerly enriches every new or incomplete Letterboxd movie before a snapshot
+ * enters its database transaction. Completed rows retain their independent
+ * cache policy and are not refreshed merely because a containing list changed.
+ */
+export async function enrichFilmGridSnapshot(
+  snapshot: ScrapeResult | WatchedScrapeResult,
+  options: FilmGridEnrichmentOptions = {}
+): Promise<EnrichedFilmGridSnapshot> {
+  if (snapshot.items.length > MAX_FILM_SNAPSHOT_ITEMS) {
+    throw new PermanentJobError("Film snapshot exceeded the persistence limit", {
+      code: "parse_error",
+    });
+  }
+
+  const findExisting = options.findExistingMovies ?? findExistingMovieStates;
+  const existingRows = await findExisting(
+    snapshot.items.map((item) => item.sourceSlug)
+  );
+  const existingBySlug = new Map(
+    existingRows.map((movie) => [movie.letterboxdSlug, movie])
+  );
+  const candidates = snapshot.items.filter((item) =>
+    needsMovieEnrichment(existingBySlug.get(item.sourceSlug))
+  );
+  const enrich = options.enrich ?? enrichMovie;
+  const enrichedMovies = await mapWithConcurrency(
+    candidates,
+    options.concurrency ?? MOVIE_ENRICHMENT_CONCURRENCY,
+    (item) => {
+      const existing = existingBySlug.get(item.sourceSlug);
+      return enrich({
+        letterboxdSlug: item.sourceSlug,
+        letterboxdFilmId:
+          item.letterboxdFilmId ?? existing?.letterboxdFilmId ?? null,
+        sourceTitle: item.sourceTitle,
+        sourceYear: item.sourceYear,
+        directTmdbId: existing?.tmdbId ?? null,
+        letterboxdPosterUrls: uniqueStrings([
+          ...(existing?.letterboxdPosterUrls ?? []),
+          ...item.letterboxdPosterUrls,
+        ]),
+      });
+    }
+  );
+
+  return { ...snapshot, enrichedMovies };
+}
+
+async function findExistingMovieStates(
+  slugs: readonly string[]
+): Promise<ExistingMovieEnrichmentState[]> {
+  if (slugs.length === 0) return [];
+  const { prisma } = await import("@/lib/prisma");
+  const rows: ExistingMovieEnrichmentState[] = [];
+  for (const batch of chunks(slugs, PERSISTENCE_BATCH_SIZE)) {
+    rows.push(
+      ...(await prisma.movie.findMany({
+        where: { letterboxdSlug: { in: batch } },
+        select: {
+          letterboxdSlug: true,
+          letterboxdFilmId: true,
+          tmdbId: true,
+          resolutionStatus: true,
+          letterboxdPosterUrls: true,
+          letterboxdStaleAt: true,
+          tmdbStaleAt: true,
+        },
+      }))
+    );
+  }
+  return rows;
+}
+
+function needsMovieEnrichment(
+  existing: ExistingMovieEnrichmentState | undefined
+): boolean {
+  if (
+    !existing ||
+    existing.resolutionStatus === "PENDING" ||
+    (existing.resolutionStatus === "RESOLVED" && existing.tmdbId === null)
+  ) {
+    return true;
+  }
+  return (
+    existing.letterboxdStaleAt === null ||
+    existing.tmdbStaleAt === null
+  );
 }
 
 async function fetchMovieSnapshot(
@@ -173,7 +289,7 @@ async function persistProfileSnapshot(
 
 async function persistFilmGridSnapshot(
   transaction: PersistenceTransaction,
-  snapshot: ScrapeResult | WatchedScrapeResult,
+  snapshot: EnrichedFilmGridSnapshot,
   kind: "watchlist" | "watched"
 ): Promise<void> {
   const fetchedAt = snapshot.fetchedAt;
@@ -208,19 +324,23 @@ async function persistFilmGridSnapshot(
     },
   });
 
-  const items = await materializeMovies(transaction, snapshot.items);
+  const items = await materializeMovies(
+    transaction,
+    snapshot.items,
+    snapshot.enrichedMovies
+  );
   if (kind === "watchlist") {
     await transaction.watchlistItem.deleteMany({ where: { userId: user.id } });
     if (items.length > 0) {
       await transaction.watchlistItem.createMany({
-        data: items.map(({ item, movieId }) => ({
+        data: items.map(({ item, movieId, resolutionStatus }) => ({
           userId: user.id,
           movieId,
           position: item.position,
           sourceTitle: item.sourceTitle,
           sourceSlug: item.sourceSlug,
           sourceYear: item.sourceYear,
-          resolutionStatus: databaseResolutionStatus(item.resolutionStatus),
+          resolutionStatus: databaseResolutionStatus(resolutionStatus),
         })),
       });
     }
@@ -228,14 +348,14 @@ async function persistFilmGridSnapshot(
     await transaction.watchedItem.deleteMany({ where: { userId: user.id } });
     if (items.length > 0) {
       await transaction.watchedItem.createMany({
-        data: items.map(({ item, movieId }) => ({
+        data: items.map(({ item, movieId, resolutionStatus }) => ({
           userId: user.id,
           movieId,
           position: item.position,
           sourceTitle: item.sourceTitle,
           sourceSlug: item.sourceSlug,
           sourceYear: item.sourceYear,
-          resolutionStatus: databaseResolutionStatus(item.resolutionStatus),
+          resolutionStatus: databaseResolutionStatus(resolutionStatus),
         })),
       });
     }
@@ -244,8 +364,15 @@ async function persistFilmGridSnapshot(
 
 async function materializeMovies(
   transaction: PersistenceTransaction,
-  items: LetterboxdFilmGridItem[]
-): Promise<Array<{ item: LetterboxdFilmGridItem; movieId: bigint }>> {
+  items: LetterboxdFilmGridItem[],
+  enrichedMovies: MovieEnrichmentResult[]
+): Promise<
+  Array<{
+    item: LetterboxdFilmGridItem;
+    movieId: bigint;
+    resolutionStatus: MovieEnrichmentResult["resolutionStatus"];
+  }>
+> {
   if (items.length > MAX_FILM_SNAPSHOT_ITEMS) {
     throw new PermanentJobError("Film snapshot exceeded the persistence limit", {
       code: "parse_error",
@@ -253,45 +380,121 @@ async function materializeMovies(
   }
 
   const idsBySlug = new Map<string, bigint>();
+  const resolutionBySlug = new Map<
+    string,
+    MovieEnrichmentResult["resolutionStatus"]
+  >();
+  const enrichmentBySlug = new Map(
+    enrichedMovies.map((movie) => [movie.letterboxdSlug, movie])
+  );
   for (const batch of chunks(items, PERSISTENCE_BATCH_SIZE)) {
     const payload = JSON.stringify(
-      batch.map((item) => ({
-        slug: item.sourceSlug,
-        letterboxdFilmId: item.letterboxdFilmId,
-        title: item.sourceTitle,
-        year: item.sourceYear,
-        posterUrls: item.letterboxdPosterUrls,
-      }))
+      batch.map((item) => {
+        const movie = enrichmentBySlug.get(item.sourceSlug);
+        return {
+          slug: item.sourceSlug,
+          letterboxdFilmId:
+            movie?.letterboxdFilmId ?? item.letterboxdFilmId,
+          tmdbId: movie?.tmdbId ?? null,
+          resolutionStatus: movie?.resolutionStatus ?? item.resolutionStatus,
+          title: movie?.title ?? item.sourceTitle,
+          year: movie?.year ?? item.sourceYear,
+          tmdbTitle: movie?.tmdbTitle ?? null,
+          tmdbOriginalTitle: movie?.originalTitle ?? null,
+          tmdbOverview: movie?.overview ?? null,
+          tmdbReleaseDate: movie?.releaseDate ?? null,
+          tmdbRuntimeMinutes: movie?.runtimeMinutes ?? null,
+          tmdbGenres: movie?.genres ?? [],
+          tmdbVoteAverage: movie?.tmdbVoteAverage ?? null,
+          tmdbPosterPath: movie?.tmdbPosterPath ?? null,
+          tmdbBackdropPath: movie?.tmdbBackdropPath ?? null,
+          posterUrls: movie?.letterboxdPosterUrls ?? item.letterboxdPosterUrls,
+          letterboxdRating: movie?.letterboxdRating ?? null,
+          tmdbFetchedAt: movie?.tmdbFetchedAt?.toISOString() ?? null,
+          tmdbStaleAt: movie?.tmdbStaleAt?.toISOString() ?? null,
+          letterboxdFetchedAt:
+            movie?.letterboxdFetchedAt.toISOString() ?? null,
+          letterboxdStaleAt: movie?.letterboxdStaleAt.toISOString() ?? null,
+        };
+      })
     );
 
-    // One parameterized UPSERT per batch replaces one network round trip per
-    // film while preserving any TMDB enrichment already stored on the row.
+    // One parameterized UPSERT per batch persists eager provider enrichment
+    // while preserving existing metadata for fresh movies that were skipped.
     await transaction.$executeRaw(Prisma.sql`
       INSERT INTO "Movie" (
         "letterboxdSlug",
         "letterboxdFilmId",
+        "tmdbId",
+        "resolutionStatus",
         "title",
         "year",
+        "tmdbTitle",
+        "tmdbOriginalTitle",
+        "tmdbOverview",
+        "tmdbReleaseDate",
+        "tmdbRuntimeMinutes",
+        "tmdbGenres",
+        "tmdbVoteAverage",
+        "tmdbPosterPath",
+        "tmdbBackdropPath",
         "letterboxdPosterUrls",
-        "resolutionStatus",
+        "letterboxdRating",
+        "tmdbFetchedAt",
+        "tmdbStaleAt",
+        "letterboxdFetchedAt",
+        "letterboxdStaleAt",
         "updatedAt"
       )
       SELECT
         source.slug,
         source."letterboxdFilmId",
+        source."tmdbId",
+        source."resolutionStatus"::"MovieResolutionStatus",
         source.title,
         source.year,
+        source."tmdbTitle",
+        source."tmdbOriginalTitle",
+        source."tmdbOverview",
+        source."tmdbReleaseDate",
+        source."tmdbRuntimeMinutes",
+        ARRAY(
+          SELECT jsonb_array_elements_text(source."tmdbGenres")
+        ),
+        source."tmdbVoteAverage",
+        source."tmdbPosterPath",
+        source."tmdbBackdropPath",
         ARRAY(
           SELECT jsonb_array_elements_text(source."posterUrls")
         ),
-        'pending'::"MovieResolutionStatus",
+        source."letterboxdRating",
+        source."tmdbFetchedAt",
+        source."tmdbStaleAt",
+        source."letterboxdFetchedAt",
+        source."letterboxdStaleAt",
         CURRENT_TIMESTAMP
       FROM jsonb_to_recordset(${payload}::jsonb) AS source(
         slug text,
         "letterboxdFilmId" integer,
+        "tmdbId" integer,
+        "resolutionStatus" text,
         title text,
         year integer,
-        "posterUrls" jsonb
+        "tmdbTitle" text,
+        "tmdbOriginalTitle" text,
+        "tmdbOverview" text,
+        "tmdbReleaseDate" date,
+        "tmdbRuntimeMinutes" integer,
+        "tmdbGenres" jsonb,
+        "tmdbVoteAverage" double precision,
+        "tmdbPosterPath" text,
+        "tmdbBackdropPath" text,
+        "posterUrls" jsonb,
+        "letterboxdRating" double precision,
+        "tmdbFetchedAt" timestamptz,
+        "tmdbStaleAt" timestamptz,
+        "letterboxdFetchedAt" timestamptz,
+        "letterboxdStaleAt" timestamptz
       )
       ON CONFLICT ("letterboxdSlug") DO UPDATE SET
         "letterboxdFilmId" = COALESCE(
@@ -301,14 +504,52 @@ async function materializeMovies(
         "title" = EXCLUDED."title",
         "year" = EXCLUDED."year",
         "letterboxdPosterUrls" = EXCLUDED."letterboxdPosterUrls",
+        "tmdbId" = CASE WHEN EXCLUDED."letterboxdFetchedAt" IS NOT NULL
+          THEN EXCLUDED."tmdbId" ELSE "Movie"."tmdbId" END,
+        "resolutionStatus" = CASE WHEN EXCLUDED."letterboxdFetchedAt" IS NOT NULL
+          THEN EXCLUDED."resolutionStatus" ELSE "Movie"."resolutionStatus" END,
+        "tmdbTitle" = CASE WHEN EXCLUDED."letterboxdFetchedAt" IS NOT NULL
+          THEN EXCLUDED."tmdbTitle" ELSE "Movie"."tmdbTitle" END,
+        "tmdbOriginalTitle" = CASE WHEN EXCLUDED."letterboxdFetchedAt" IS NOT NULL
+          THEN EXCLUDED."tmdbOriginalTitle" ELSE "Movie"."tmdbOriginalTitle" END,
+        "tmdbOverview" = CASE WHEN EXCLUDED."letterboxdFetchedAt" IS NOT NULL
+          THEN EXCLUDED."tmdbOverview" ELSE "Movie"."tmdbOverview" END,
+        "tmdbReleaseDate" = CASE WHEN EXCLUDED."letterboxdFetchedAt" IS NOT NULL
+          THEN EXCLUDED."tmdbReleaseDate" ELSE "Movie"."tmdbReleaseDate" END,
+        "tmdbRuntimeMinutes" = CASE WHEN EXCLUDED."letterboxdFetchedAt" IS NOT NULL
+          THEN EXCLUDED."tmdbRuntimeMinutes" ELSE "Movie"."tmdbRuntimeMinutes" END,
+        "tmdbGenres" = CASE WHEN EXCLUDED."letterboxdFetchedAt" IS NOT NULL
+          THEN EXCLUDED."tmdbGenres" ELSE "Movie"."tmdbGenres" END,
+        "tmdbVoteAverage" = CASE WHEN EXCLUDED."letterboxdFetchedAt" IS NOT NULL
+          THEN EXCLUDED."tmdbVoteAverage" ELSE "Movie"."tmdbVoteAverage" END,
+        "tmdbPosterPath" = CASE WHEN EXCLUDED."letterboxdFetchedAt" IS NOT NULL
+          THEN EXCLUDED."tmdbPosterPath" ELSE "Movie"."tmdbPosterPath" END,
+        "tmdbBackdropPath" = CASE WHEN EXCLUDED."letterboxdFetchedAt" IS NOT NULL
+          THEN EXCLUDED."tmdbBackdropPath" ELSE "Movie"."tmdbBackdropPath" END,
+        "letterboxdRating" = CASE WHEN EXCLUDED."letterboxdFetchedAt" IS NOT NULL
+          THEN EXCLUDED."letterboxdRating" ELSE "Movie"."letterboxdRating" END,
+        "tmdbFetchedAt" = CASE WHEN EXCLUDED."letterboxdFetchedAt" IS NOT NULL
+          THEN EXCLUDED."tmdbFetchedAt" ELSE "Movie"."tmdbFetchedAt" END,
+        "tmdbStaleAt" = CASE WHEN EXCLUDED."letterboxdFetchedAt" IS NOT NULL
+          THEN EXCLUDED."tmdbStaleAt" ELSE "Movie"."tmdbStaleAt" END,
+        "letterboxdFetchedAt" = CASE WHEN EXCLUDED."letterboxdFetchedAt" IS NOT NULL
+          THEN EXCLUDED."letterboxdFetchedAt" ELSE "Movie"."letterboxdFetchedAt" END,
+        "letterboxdStaleAt" = CASE WHEN EXCLUDED."letterboxdFetchedAt" IS NOT NULL
+          THEN EXCLUDED."letterboxdStaleAt" ELSE "Movie"."letterboxdStaleAt" END,
         "updatedAt" = CURRENT_TIMESTAMP
     `);
 
     const movies = await transaction.movie.findMany({
       where: { letterboxdSlug: { in: batch.map((item) => item.sourceSlug) } },
-      select: { id: true, letterboxdSlug: true },
+      select: { id: true, letterboxdSlug: true, resolutionStatus: true },
     });
-    for (const movie of movies) idsBySlug.set(movie.letterboxdSlug, movie.id);
+    for (const movie of movies) {
+      idsBySlug.set(movie.letterboxdSlug, movie.id);
+      resolutionBySlug.set(
+        movie.letterboxdSlug,
+        movie.resolutionStatus.toLowerCase() as MovieEnrichmentResult["resolutionStatus"]
+      );
+    }
   }
 
   return items.map((item) => {
@@ -316,7 +557,14 @@ async function materializeMovies(
     if (movieId === undefined) {
       throw new Error(`Movie upsert did not return ${item.sourceSlug}`);
     }
-    return { item, movieId };
+    return {
+      item,
+      movieId,
+      resolutionStatus:
+        enrichmentBySlug.get(item.sourceSlug)?.resolutionStatus ??
+        resolutionBySlug.get(item.sourceSlug) ??
+        item.resolutionStatus,
+    };
   });
 }
 
@@ -417,6 +665,34 @@ async function materializeNetworkMembers(
     for (const row of rows) ids.set(row.username, row.id);
   }
   return ids;
+}
+
+async function mapWithConcurrency<T, TResult>(
+  values: readonly T[],
+  concurrency: number,
+  map: (value: T) => Promise<TResult>
+): Promise<TResult[]> {
+  if (!Number.isSafeInteger(concurrency) || concurrency < 1) {
+    throw new TypeError("Movie enrichment concurrency must be positive");
+  }
+
+  const results = new Array<TResult>(values.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(concurrency, values.length) },
+    async () => {
+      while (nextIndex < values.length) {
+        const index = nextIndex++;
+        results[index] = await map(values[index]!);
+      }
+    }
+  );
+  await Promise.all(workers);
+  return results;
+}
+
+function uniqueStrings(values: readonly string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
 function chunks<T>(values: readonly T[], size: number): T[][] {

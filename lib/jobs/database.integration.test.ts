@@ -2,6 +2,7 @@ import { randomInt, randomUUID } from "node:crypto";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { PrismaClient } from "@/lib/generated/prisma/client";
+import type { MovieEnrichmentResult } from "@/lib/letterboxd";
 import { enqueueScrapeJob } from "./publisher";
 import { createOrReuseJob } from "./repository";
 import { createDefaultWorkerRegistry } from "./workers";
@@ -96,6 +97,55 @@ describe.skipIf(!databaseUrl)("database and queue integration", () => {
       ],
     }));
     const fetchedAt = new Date();
+    const firstSlug = `${identifier}-film-0`;
+    const enrichedMovies: MovieEnrichmentResult[] = [
+      {
+        letterboxdFilmId: firstLetterboxdFilmId,
+        tmdbId: 157336,
+        letterboxdSlug: firstSlug,
+        letterboxdUrl: `https://letterboxd.com/film/${firstSlug}/`,
+        title: "Integration Film 0",
+        year: 2000,
+        resolutionStatus: "resolved",
+        letterboxdRating: 4.2,
+        posterUrl: "https://image.tmdb.org/t/p/w500/integration.jpg",
+        posterSource: "tmdb",
+        posterFallbackUrls: [],
+        originalTitle: "Integration Film 0",
+        overview: "Integration metadata",
+        releaseDate: "2000-01-02",
+        runtimeMinutes: 120,
+        genres: ["Drama"],
+        tmdbVoteAverage: 8.1,
+        backdropUrl: null,
+        tmdbTitle: "Integration Film 0",
+        tmdbPosterPath: "/integration.jpg",
+        tmdbBackdropPath: null,
+        letterboxdPosterUrls: [
+          `https://a.ltrbxd.com/${identifier}-0.jpg`,
+        ],
+        tmdbFetchedAt: fetchedAt,
+        tmdbStaleAt: new Date(fetchedAt.getTime() + 30 * 24 * 60 * 60 * 1_000),
+        letterboxdFetchedAt: fetchedAt,
+        letterboxdStaleAt: new Date(
+          fetchedAt.getTime() + 24 * 60 * 60 * 1_000
+        ),
+        sourceTimestamps: {
+          tmdb: {
+            fetchedAt,
+            staleAt: new Date(
+              fetchedAt.getTime() + 30 * 24 * 60 * 60 * 1_000
+            ),
+          },
+          letterboxd: {
+            fetchedAt,
+            staleAt: new Date(
+              fetchedAt.getTime() + 24 * 60 * 60 * 1_000
+            ),
+          },
+        },
+      },
+    ];
 
     await client.$transaction(
       (transaction) =>
@@ -107,25 +157,33 @@ describe.skipIf(!databaseUrl)("database and queue integration", () => {
             films: items,
             filmCount: items.length,
             fetchedAt,
+            enrichedMovies,
           },
           { identifier, fetchedAt }
         ),
       { timeout: 30_000 }
     );
 
-    const [storedItems, firstMovie] = await Promise.all([
+    const [storedItems, firstMovie, firstItem] = await Promise.all([
       client.watchlistItem.count({
         where: { user: { username: identifier } },
       }),
       client.movie.findUnique({
-        where: { letterboxdSlug: `${identifier}-film-0` },
+        where: { letterboxdSlug: firstSlug },
+      }),
+      client.watchlistItem.findFirst({
+        where: { user: { username: identifier }, sourceSlug: firstSlug },
       }),
     ]);
     expect(storedItems).toBe(101);
     expect(firstMovie).toMatchObject({
       letterboxdFilmId: firstLetterboxdFilmId,
-      tmdbId: null,
-      resolutionStatus: "PENDING",
+      tmdbId: 157336,
+      resolutionStatus: "RESOLVED",
+      tmdbTitle: "Integration Film 0",
+      tmdbOverview: "Integration metadata",
+      letterboxdRating: 4.2,
     });
+    expect(firstItem?.resolutionStatus).toBe("RESOLVED");
   });
 });

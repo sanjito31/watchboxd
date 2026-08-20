@@ -13,7 +13,15 @@ export function parseLetterboxdFilmPage(
       .first()
       .attr("data-resolvable-poster-path")
   );
-  const tmdbId = positiveInteger($("body").attr("data-tmdb-id"));
+  let linkedTmdbId: number | null = null;
+  $('a[href]').each((_, element) => {
+    linkedTmdbId ??= tmdbMovieIdFromUrl($(element).attr("href"));
+  });
+  // The outbound TMDB movie link is Letterboxd's explicit source mapping.
+  // Keep the body attribute as a compatibility fallback for pages/templates
+  // that omit that link.
+  const tmdbId =
+    linkedTmdbId ?? positiveInteger($("body").attr("data-tmdb-id"));
   let weightedAverage: number | null = null;
   const posterUrls: string[] = [];
 
@@ -51,6 +59,23 @@ export function parseLetterboxdFilmPage(
 
 export function parseLetterboxdWeightedAverage(html: string): number | null {
   return parseLetterboxdFilmPage(html).weightedAverage;
+}
+
+export function tmdbMovieIdFromUrl(value: string | undefined): number | null {
+  if (!value) return null;
+
+  let url: URL;
+  try {
+    url = new URL(value, "https://letterboxd.com");
+  } catch {
+    return null;
+  }
+
+  const hostname = url.hostname.toLowerCase().replace(/^www\./, "");
+  if (hostname !== "themoviedb.org") return null;
+
+  const match = url.pathname.match(/^\/movie\/(\d+)(?:[-/]|$)/);
+  return positiveInteger(match?.[1]);
 }
 
 function parseJsonLd(raw: string): unknown | null {

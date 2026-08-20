@@ -112,9 +112,11 @@ Letterboxd has no public API. Requests use the versioned API, which reads
 persistent snapshots from Supabase Postgres. Cache misses and stale resources
 create idempotent `ScrapeJob` rows and publish a minimal message to the
 `scrape-jobs-v1` Vercel Queue topic. The private Node.js consumer scrapes
-Letterboxd, enriches movies through TMDB, and atomically replaces each
-snapshot. The browser follows `202 Accepted` job descriptors and computes no
-overlap locally.
+Letterboxd, reads the outbound TMDB movie link on each new film page, fetches
+that TMDB record before inserting the movie, and atomically replaces each
+snapshot with complete metadata. Existing completed movies keep their own
+rating and TMDB cache lifetimes. The browser follows `202 Accepted` job
+descriptors and computes no overlap locally.
 
 | Route | Purpose |
 |-------|---------|

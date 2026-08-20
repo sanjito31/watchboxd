@@ -55,4 +55,23 @@ describe("parseLetterboxdFilmPage", () => {
       weightedAverage: 4.27,
     });
   });
+
+  it("prefers the outbound TMDB movie link over the body attribute", () => {
+    const html = `
+      <body data-tmdb-id="999">
+        <a href="https://www.themoviedb.org/movie/550-fight-club">TMDB</a>
+        <a href="https://example.com/movie/123">Unrelated</a>
+      </body>`;
+
+    expect(parseLetterboxdFilmPage(html).tmdbId).toBe(550);
+  });
+
+  it("ignores non-movie TMDB links and falls back to the body mapping", () => {
+    const html = `
+      <body data-tmdb-id="157336">
+        <a href="https://www.themoviedb.org/tv/1399-game-of-thrones">TMDB</a>
+      </body>`;
+
+    expect(parseLetterboxdFilmPage(html).tmdbId).toBe(157336);
+  });
 });

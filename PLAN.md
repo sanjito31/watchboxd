@@ -27,7 +27,8 @@ Existing scraping behavior remains substantially unchanged. TMDB supplies primar
   - `/[username]/watchlist/`
   - `/[username]/films/`
 - Retain `film:<id>` from `data-resolvable-poster-path.postered.uid` as Letterboxd's internal film ID; it is not a TMDB ID.
-- Read the actual TMDB ID from the film page's `body[data-tmdb-id]`. If it is absent, search TMDB by title/year and accept only a unique exact normalized title and release-year match. Ambiguous results remain explicitly unresolved.
+- Read the actual TMDB ID from the film page's outbound `themoviedb.org/movie/{id}` link, falling back to `body[data-tmdb-id]` for older templates. If both are absent, search TMDB by title/year and accept only a unique exact normalized title and release-year match. Ambiguous results remain explicitly unresolved.
+- Eagerly fetch TMDB metadata for new or incomplete movies discovered by watchlist/watched scraping before opening the snapshot transaction; do not insert pending movie rows and defer their initial resolution to a later API request.
 - Persist all Letterboxd poster candidates already produced by `buildPosterUrlCandidates`.
 - Poster selection order:
   1. TMDB poster URL
@@ -179,6 +180,10 @@ Conclusion:
 ## Parallel Multi-Agent Implementation Plan
 
 ### Shared contract phase — lead agent, completed first
+
+**Status:** Complete and frozen on 2026-08-19. The contract sources, migration
+rules, ownership boundaries, and change-control procedure are recorded in
+[`docs/shared-contracts.md`](docs/shared-contracts.md).
 
 Freeze these shared resources before parallel work begins:
 

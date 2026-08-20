@@ -98,6 +98,24 @@ describe("enrichMovie", () => {
     expect(provider.searchMovies).not.toHaveBeenCalled();
   });
 
+  it("treats Letterboxd's TMDB link as authoritative over a persisted ID", async () => {
+    const provider = tmdbProvider(details);
+    const result = await enrichMovie(
+      {
+        letterboxdSlug: "interstellar",
+        directTmdbId: 1,
+      },
+      {
+        tmdb: provider,
+        fetchLetterboxdHtml: async () => filmHtml,
+      }
+    );
+
+    expect(result.tmdbId).toBe(157336);
+    expect(provider.getMovieDetails).toHaveBeenCalledWith(157336);
+    expect(provider.getMovieDetails).not.toHaveBeenCalledWith(1);
+  });
+
   it("uses persisted Letterboxd candidates when TMDB has no poster", async () => {
     const result = await enrichMovie(
       {
