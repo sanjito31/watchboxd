@@ -51,6 +51,24 @@ export function classifyJobError(error: unknown): ClassifiedJobError {
       retryable: true,
     };
   }
+  if (isPrismaTransactionCapacityError(error)) {
+    return {
+      failure: sanitizeJobFailure(
+        "timeout",
+        "Database transaction capacity was temporarily unavailable"
+      ),
+      retryable: true,
+    };
+  }
+  if (isPrismaVoidDeserializationError(error)) {
+    return {
+      failure: sanitizeJobFailure(
+        "unknown",
+        "Database query returned an unsupported void result"
+      ),
+      retryable: false,
+    };
+  }
 
   return {
     failure: sanitizeJobFailure(
@@ -59,6 +77,34 @@ export function classifyJobError(error: unknown): ClassifiedJobError {
     ),
     retryable: true,
   };
+}
+
+function isPrismaTransactionCapacityError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "P2028" &&
+    "message" in error &&
+    typeof (error as { message?: unknown }).message === "string" &&
+    (error as { message: string }).message.includes(
+      "Unable to start a transaction"
+    )
+  );
+}
+
+function isPrismaVoidDeserializationError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === "P2010" &&
+    "message" in error &&
+    typeof (error as { message?: unknown }).message === "string" &&
+    (error as { message: string }).message.includes(
+      "Failed to deserialize column of type 'void'"
+    )
+  );
 }
 
 export function sanitizeJobFailure(

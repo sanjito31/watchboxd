@@ -28,6 +28,39 @@ describe("job error handling", () => {
     });
   });
 
+  it("classifies transaction-start pool contention as a retryable timeout", () => {
+    expect(
+      classifyJobError({
+        code: "P2028",
+        message:
+          "Transaction API error: Unable to start a transaction in the given time.",
+      })
+    ).toEqual({
+      retryable: true,
+      failure: {
+        code: "timeout",
+        message: "Database transaction capacity was temporarily unavailable",
+      },
+    });
+  });
+
+  it("does not retry Prisma void-result deserialization failures", () => {
+    const error = Object.assign(
+      new Error(
+        "Raw query failed. Failed to deserialize column of type 'void'."
+      ),
+      { code: "P2010" }
+    );
+
+    expect(classifyJobError(error)).toEqual({
+      retryable: false,
+      failure: {
+        code: "unknown",
+        message: "Database query returned an unsupported void result",
+      },
+    });
+  });
+
   it("redacts credentials and bounds persisted messages", () => {
     const failure = sanitizeJobFailure(
       "unknown",

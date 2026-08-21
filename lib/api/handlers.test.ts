@@ -22,6 +22,7 @@ import {
   getMovieByLetterboxdSlug,
   getOverlap,
   getProfile,
+  getWatched,
   getWatchlist,
 } from "@/lib/api/handlers";
 
@@ -121,6 +122,59 @@ describe("v1 route handlers", () => {
     });
     expect(serviceMocks.getWatchlist).not.toHaveBeenCalled();
   });
+
+  it.each(["watchlist", "watched"] as const)(
+    "returns a 200 partial %s response without polling movie jobs",
+    async (kind) => {
+      const result = {
+        data: {
+          user: { username: "alice", displayName: null, avatarUrl: null },
+          items: [
+            {
+              position: 0,
+              movie: {
+                letterboxdSlug: "waiting",
+                title: "Waiting",
+                year: 2026,
+                letterboxdFilmId: null,
+                tmdbId: null,
+                letterboxdPoster: "https://a.ltrbxd.com/waiting.jpg",
+                letterboxdRating: null,
+              },
+            },
+          ],
+          filmCount: 1,
+          pagination: { page: 1, pageSize: 50, total: 1, totalPages: 1 },
+        },
+        meta: {
+          cache: "hit",
+          fetchedAt: "2026-08-19T15:00:00.000Z",
+          staleAt: "2026-08-20T15:00:00.000Z",
+          refreshJobs: [],
+          enrichment: {
+            complete: false,
+            pendingSlugs: ["waiting"],
+            failedSlugs: [],
+          },
+        },
+      };
+      const service =
+        kind === "watchlist"
+          ? serviceMocks.getWatchlist
+          : serviceMocks.getWatched;
+      service.mockResolvedValue(result);
+      const handler = kind === "watchlist" ? getWatchlist : getWatched;
+
+      const response = await handler(
+        request(`https://api.example/api/v1/users/alice/${kind}`),
+        { params: Promise.resolve({ username: "alice" }) }
+      );
+
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual(result);
+      expect(service).toHaveBeenCalledWith("alice", 1, 50);
+    }
+  );
 
   it("passes a validated TMDB ID to the movie service", async () => {
     serviceMocks.getMovie.mockResolvedValue({

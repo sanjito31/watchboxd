@@ -23,6 +23,45 @@ describe("persistent scraping migration", () => {
     expect(sql).toContain('"Movie_tmdbId_key"');
   });
 
+  it("expands safely before dropping legacy worker columns", async () => {
+    const sql = await readFile(
+      new URL(
+        "./migrations/20260821020441_letterboxd_movie_cache_expand/migration.sql",
+        import.meta.url
+      ),
+      "utf8"
+    );
+    expect(sql).toContain("ADD COLUMN \"letterboxdPoster\" TEXT");
+    expect(sql).toContain('CREATE TABLE "MovieAlias"');
+    expect(sql).toContain('ALTER COLUMN "sourceTitle" DROP NOT NULL');
+    expect(sql).not.toContain('DROP COLUMN "tmdbTitle"');
+    expect(sql).toContain('ALTER TABLE "MovieAlias" ENABLE ROW LEVEL SECURITY');
+    expect(sql).toContain("ARRAY['anon', 'authenticated']");
+  });
+
+  it("keeps contraction explicit and maps legacy statuses to failed", async () => {
+    const sql = await readFile(
+      new URL(
+        "./migrations/20260821030000_letterboxd_movie_cache_contract/migration.sql",
+        import.meta.url
+      ),
+      "utf8"
+    );
+    for (const column of [
+      "tmdbTitle",
+      "tmdbOverview",
+      "tmdbGenres",
+      "letterboxdPosterUrls",
+      "tmdbFetchedAt",
+      "sourceTitle",
+      "sourceSlug",
+    ]) {
+      expect(sql).toContain(`DROP COLUMN "${column}"`);
+    }
+    expect(sql).toContain("ELSE 'failed'");
+    expect(sql).toContain("Movie_resolved_cache_complete");
+  });
+
   it("indexes every foreign key and ordered lookup", async () => {
     const sql = await migrationSql();
     for (const index of [

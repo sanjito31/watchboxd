@@ -1,14 +1,11 @@
 const SECOND_MS = 1_000;
 const HOUR_MS = 60 * 60 * SECOND_MS;
-const DAY_MS = 24 * HOUR_MS;
-
 export const CACHE_TTL_MS = {
   profile: 24 * HOUR_MS,
   network: 24 * HOUR_MS,
   watchlist: 6 * HOUR_MS,
   watched: 6 * HOUR_MS,
-  letterboxdRating: 24 * HOUR_MS,
-  tmdbMetadata: 30 * DAY_MS,
+  movie: 24 * HOUR_MS,
   notFound: 1 * HOUR_MS,
 } as const;
 

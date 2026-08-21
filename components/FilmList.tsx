@@ -21,15 +21,14 @@ export function FilmList({ films }: FilmListProps) {
       {films.map((film) => (
         <li key={film.letterboxdSlug}>
           <a
-            href={film.letterboxdUrl}
+            href={`https://letterboxd.com/film/${film.letterboxdSlug}/`}
             target="_blank"
             rel="noopener noreferrer"
             className="group flex cursor-pointer items-center gap-4 bg-lb-charcoal px-4 py-3 transition hover:bg-lb-shadow"
           >
             <span className="shrink-0">
               <PosterImage
-                posterUrl={film.posterUrl}
-                posterFallbackUrls={film.posterFallbackUrls}
+                posterUrl={film.letterboxdPoster}
                 alt={`${film.title} poster`}
                 width={48}
                 height={72}
@@ -49,13 +48,6 @@ export function FilmList({ films }: FilmListProps) {
               <span className="text-xs text-lb-steel">
                 On {film.overlapCount} of {film.partySize} watchlists
               </span>
-              {film.resolutionStatus !== "resolved" && (
-                <span className="mt-0.5 block text-xs text-lb-cloud">
-                  {film.resolutionStatus === "pending"
-                    ? "Movie details are still loading"
-                    : "Some movie details are unavailable"}
-                </span>
-              )}
             </span>
             <AvatarStack members={film.presentFor} />
           </a>

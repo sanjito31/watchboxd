@@ -12,7 +12,7 @@ Add people by username or profile URL, scrape their public watchlists on the ser
 - **Friend suggestions** — after adding someone, browse their mutual followers and following list to add more people quickly
 - **Ranked overlap** — films sorted by overlap count (e.g. 4 of 5 watchlists), 10 per page
 - **Shareable links** — party saved in the URL (`?users=alice,bob`) and in `localStorage`
-- **Posters** — TMDB-first artwork with ordered Letterboxd and local fallbacks
+- **Posters** — Letterboxd artwork with a local placeholder fallback
 
 ## Getting started
 
@@ -69,7 +69,6 @@ Prisma connects to Supabase using two server-only variables in `.env.local`:
 
 Provider and API configuration is also server-only:
 
-- `TMDB_API_READ_TOKEN` is preferred; `TMDB_API_KEY` is the v3 fallback.
 - `API_ALLOWED_ORIGINS` is a comma-separated CORS allowlist.
 - `TEST_DATABASE_URL` must point to an isolated disposable database when
   running database integration tests.
@@ -90,6 +89,16 @@ npm run db:test
 npm run db:migrate -- --name <migration-name>
 npm run db:deploy
 npm run db:studio
+npm run jobs:backfill-movies -- --dry-run --limit 100
+```
+
+After deploying a queue-consumer fix, active messages from an older deployment
+can be retired without deleting cache data. The repair also makes incomplete
+failed movies pending again. Run this before making a new API request;
+requested pages will create replacement jobs naturally:
+
+```bash
+npx prisma db execute --file prisma/repair-active-jobs.sql
 ```
 
 Set both database variables in the deployment environment as well. Generated
@@ -112,11 +121,13 @@ Letterboxd has no public API. Requests use the versioned API, which reads
 persistent snapshots from Supabase Postgres. Cache misses and stale resources
 create idempotent `ScrapeJob` rows and publish a minimal message to the
 `scrape-jobs-v1` Vercel Queue topic. The private Node.js consumer scrapes
-Letterboxd, reads the outbound TMDB movie link on each new film page, fetches
-that TMDB record before inserting the movie, and atomically replaces each
-snapshot with complete metadata. Existing completed movies keep their own
-rating and TMDB cache lifetimes. The browser follows `202 Accepted` job
-descriptors and computes no overlap locally.
+Letterboxd. List workers atomically save lightweight movies, ordered
+relationships, and deduplicated child movie jobs. Movie workers then scrape
+only the Letterboxd film page for its title, year, film ID, outbound TMDB ID,
+primary poster, and rating. TMDB is never requested by this application; API
+consumers can use the returned `tmdbId` directly if they need other metadata.
+The browser follows `202 Accepted` job descriptors and computes no overlap
+locally.
 
 | Route | Purpose |
 |-------|---------|
@@ -124,31 +135,42 @@ descriptors and computes no overlap locally.
 | `GET /api/v1/users/{username}/watchlist` | Paginated watchlist |
 | `GET /api/v1/users/{username}/watched` | Paginated deduplicated watched titles |
 | `GET /api/v1/users/{username}/network` | Mutual and following network |
-| `GET /api/v1/movies/{tmdbId}` | Match a TMDB movie to Letterboxd, then return metadata, rating, and poster fallbacks |
-| `GET /api/v1/movies/letterboxd/{letterboxdSlug}` | Fallback movie lookup by Letterboxd slug |
+| `GET /api/v1/movies/{tmdbId}` | Follow Letterboxd's `/tmdb/{id}/` redirect and return Letterboxd movie data |
+| `GET /api/v1/movies/letterboxd/{letterboxdSlug}` | Movie lookup by Letterboxd slug or known alias |
 | `GET /api/v1/overlap?users=a,b` | Server-computed paginated overlap |
 | `GET /api/v1/jobs/{jobId}` | Pollable background-job status |
 
-Fresh responses return `200`; misses return `202` with `Location` and
-`Retry-After`; stale snapshots return immediately with a refresh job.
+Fresh responses return `200`; cache misses return `202` with `Location` and
+`Retry-After`; stale data returns immediately with deduplicated `refreshJobs`.
+Once a watchlist or watched snapshot exists, its paginated
+response returns provisional title, year, slug, and poster data without waiting
+for child movie jobs. Page-scoped `meta.enrichment` reports `complete`,
+`pendingSlugs`, and `failedSlugs`. Failed enrichment remains visible in these
+two lists; overlap continues to require resolved page movies and omits failed
+ones. List responses do not create or inspect per-movie jobs; individual movie
+routes handle movie freshness and recovery.
 
 ## Deployment checklist
 
 1. Rotate any previously exposed Supabase database password before rollout.
-2. Configure `DATABASE_URL`, `DIRECT_URL`, `DATABASE_POOL_MAX`,
-   `TMDB_API_READ_TOKEN`, `TMDB_API_KEY`, and `API_ALLOWED_ORIGINS` separately
-   for Preview and Production.
-3. From a trusted environment, run `npm run db:deploy` with the intended
-   `DIRECT_URL`. Never run `db push` for this schema.
-4. Deploy `vercel.json` to register the private `queue/v2beta` consumer. Set
-   the `scrape-jobs-v1` consumer-group maximum concurrency to **4** in Vercel
-   Queue settings/API; the JavaScript trigger schema does not accept
-   `maxConcurrency`.
-5. Confirm Fluid Compute is enabled and the consumer has a five-minute maximum
+2. Configure `DATABASE_URL`, `DIRECT_URL`, `DATABASE_POOL_MAX`, and
+   `API_ALLOWED_ORIGINS` separately for Preview and Production.
+3. Stop old application instances and queue deliveries, then run
+   `npm run db:deploy`. Expansion and contraction are recorded migrations and
+   apply in order. Never run `db push` for this schema.
+4. With traffic still stopped, run
+   `npx prisma db execute --file prisma/reset-cache-data.sql`, deploy the new
+   application, and smoke-test list → child movie jobs → page `202` → `200`.
+5. Deploy `vercel.json` to register the private `queue/v2beta` consumer.
+   Vercel currently documents push-mode maximum concurrency but exposes no
+   supported dashboard, trigger, or callback-SDK setting for it. Do not rely on
+   that control; use a poll-mode worker or an application-level capacity gate
+   before enabling large fan-out in production.
+6. Confirm Fluid Compute is enabled and the consumer has a five-minute maximum
    duration.
-6. Add a Vercel WAF rate-limit rule for `/api/v1/*`: initially 120 requests per
+7. Add a Vercel WAF rate-limit rule for `/api/v1/*`: initially 120 requests per
    minute per IP.
-7. On Preview, verify miss → Queue → consumer → Supabase → poll → `200`, then
+8. On Preview, verify miss → Queue → consumer → Supabase → poll → `200`, then
    inspect retries, oldest-message age, function duration, and database usage
    before promoting to Production.
 

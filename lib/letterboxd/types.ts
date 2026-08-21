@@ -1,4 +1,3 @@
-import type { MovieResolutionStatus } from "@/lib/api/contracts";
 import type { Film } from "@/lib/types";
 
 /**
@@ -10,7 +9,6 @@ export interface LetterboxdFilmGridItem extends Film {
   sourceTitle: string;
   sourceSlug: string;
   sourceYear: number | null;
-  resolutionStatus: MovieResolutionStatus;
   letterboxdFilmId: number | null;
   letterboxdPosterUrls: string[];
 }

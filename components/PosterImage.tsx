@@ -4,8 +4,7 @@ import { useState } from "react";
 import { DEFAULT_POSTER_PLACEHOLDER_URL } from "@/lib/movies/posters";
 
 interface PosterImageProps {
-  posterUrl: string;
-  posterFallbackUrls: string[];
+  posterUrl: string | null;
   alt: string;
   className?: string;
   width?: number;
@@ -13,29 +12,26 @@ interface PosterImageProps {
 }
 
 export function buildPosterCandidates(
-  posterUrl: string,
-  posterFallbackUrls: readonly string[]
+  posterUrl: string | null
 ): string[] {
   return [
     ...new Set(
       [
         posterUrl,
-        ...posterFallbackUrls,
         DEFAULT_POSTER_PLACEHOLDER_URL,
-      ].filter((url) => url.trim().length > 0)
+      ].filter((url): url is string => Boolean(url?.trim()))
     ),
   ];
 }
 
 export function PosterImage({
   posterUrl,
-  posterFallbackUrls,
   alt,
   className,
   width = 48,
   height = 72,
 }: PosterImageProps) {
-  const candidates = buildPosterCandidates(posterUrl, posterFallbackUrls);
+  const candidates = buildPosterCandidates(posterUrl);
   const candidateKey = candidates.join("\u0000");
   const [selection, setSelection] = useState({ candidateKey, index: 0 });
   const index =

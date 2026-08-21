@@ -26,7 +26,7 @@ const adapter = new PrismaPg(
     connectionString,
     max: poolMax,
     idleTimeoutMillis: 10_000,
-    connectionTimeoutMillis: 10_000,
+    connectionTimeoutMillis: 30_000,
     allowExitOnIdle: true,
   },
   {
@@ -39,6 +39,13 @@ export const prisma =
   globalForPrisma.prisma ??
   new PrismaClient({
     adapter,
+    // Fluid Compute can run several queue callbacks in one process. Prisma's
+    // two-second interactive-transaction default is too short when those
+    // callbacks briefly share this small serverless pool.
+    transactionOptions: {
+      maxWait: 30_000,
+      timeout: 60_000,
+    },
   });
 
 if (process.env.NODE_ENV !== "production") {

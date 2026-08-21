@@ -25,17 +25,11 @@ export class PrismaApiRepository implements ApiRepository {
     const user = await prisma.letterboxdUser.findUnique({
       where: { username },
       include: {
-        watchlistItems: {
-          include: movieInclude,
-          orderBy: { position: "asc" },
-        },
+        watchlistItems: { include: movieInclude, orderBy: { position: "asc" } },
       },
     });
     return user
-      ? {
-          user: mapUser(user),
-          items: user.watchlistItems.map(mapListItem),
-        }
+      ? { user: mapUser(user), items: user.watchlistItems.map(mapListItem) }
       : null;
   }
 
@@ -43,17 +37,11 @@ export class PrismaApiRepository implements ApiRepository {
     const user = await prisma.letterboxdUser.findUnique({
       where: { username },
       include: {
-        watchedItems: {
-          include: movieInclude,
-          orderBy: { position: "asc" },
-        },
+        watchedItems: { include: movieInclude, orderBy: { position: "asc" } },
       },
     });
     return user
-      ? {
-          user: mapUser(user),
-          items: user.watchedItems.map(mapListItem),
-        }
+      ? { user: mapUser(user), items: user.watchedItems.map(mapListItem) }
       : null;
   }
 
@@ -68,14 +56,12 @@ export class PrismaApiRepository implements ApiRepository {
       },
     });
     if (!user) return null;
-
     const mutuals = user.ownedNetworkEdges
       .filter((edge) => edge.relationship === NetworkRelationship.MUTUAL)
       .map(mapNetworkMember);
     const following = user.ownedNetworkEdges
       .filter((edge) => edge.relationship === NetworkRelationship.FOLLOWING)
       .map(mapNetworkMember);
-
     return {
       user: mapUser(user),
       data: {
@@ -95,15 +81,18 @@ export class PrismaApiRepository implements ApiRepository {
   }
 
   async getMovieByTmdbId(tmdbId: number): Promise<MovieRecord | null> {
-    const movie = await prisma.movie.findUnique({
-      where: { tmdbId },
-    });
+    const movie = await prisma.movie.findUnique({ where: { tmdbId } });
     return movie ? mapMovie(movie) : null;
   }
 
   async getMovieByLetterboxdSlug(slug: string): Promise<MovieRecord | null> {
-    const movie = await prisma.movie.findUnique({
-      where: { letterboxdSlug: slug },
+    const movie = await prisma.movie.findFirst({
+      where: {
+        OR: [
+          { letterboxdSlug: slug },
+          { aliases: { some: { slug } } },
+        ],
+      },
     });
     return movie ? mapMovie(movie) : null;
   }
@@ -112,13 +101,9 @@ export class PrismaApiRepository implements ApiRepository {
     const users = await prisma.letterboxdUser.findMany({
       where: { username: { in: [...usernames] } },
       include: {
-        watchlistItems: {
-          include: movieInclude,
-          orderBy: { position: "asc" },
-        },
+        watchlistItems: { include: movieInclude, orderBy: { position: "asc" } },
       },
     });
-
     return users.map((user) => ({
       user: mapUser(user),
       items: user.watchlistItems.map(mapListItem),
@@ -143,41 +128,21 @@ function mapUser(user: {
     username: user.username,
     displayName: user.displayName,
     avatarUrl: user.avatarUrl,
-    profile: {
-      fetchedAt: user.profileFetchedAt,
-      staleAt: user.profileStaleAt,
-    },
+    profile: { fetchedAt: user.profileFetchedAt, staleAt: user.profileStaleAt },
     watchlist: {
       fetchedAt: user.watchlistFetchedAt,
       staleAt: user.watchlistStaleAt,
     },
-    watched: {
-      fetchedAt: user.watchedFetchedAt,
-      staleAt: user.watchedStaleAt,
-    },
-    network: {
-      fetchedAt: user.networkFetchedAt,
-      staleAt: user.networkStaleAt,
-    },
+    watched: { fetchedAt: user.watchedFetchedAt, staleAt: user.watchedStaleAt },
+    network: { fetchedAt: user.networkFetchedAt, staleAt: user.networkStaleAt },
   };
 }
 
 function mapListItem(item: {
   position: number;
-  sourceTitle: string;
-  sourceSlug: string;
-  sourceYear: number | null;
-  resolutionStatus: string;
   movie: Parameters<typeof mapMovie>[0];
 }): ListItemRecord {
-  return {
-    position: item.position,
-    sourceTitle: item.sourceTitle,
-    sourceSlug: item.sourceSlug,
-    sourceYear: item.sourceYear,
-    resolutionStatus: mapResolutionStatus(item.resolutionStatus),
-    movie: mapMovie(item.movie),
-  };
+  return { position: item.position, movie: mapMovie(item.movie) };
 }
 
 function mapMovie(movie: {
@@ -187,19 +152,8 @@ function mapMovie(movie: {
   resolutionStatus: string;
   title: string;
   year: number | null;
-  tmdbTitle: string | null;
-  tmdbOriginalTitle: string | null;
-  tmdbOverview: string | null;
-  tmdbReleaseDate: Date | null;
-  tmdbRuntimeMinutes: number | null;
-  tmdbGenres: string[];
-  tmdbVoteAverage: number | null;
-  tmdbPosterPath: string | null;
-  tmdbBackdropPath: string | null;
-  letterboxdPosterUrls: string[];
+  letterboxdPoster: string | null;
   letterboxdRating: number | null;
-  tmdbFetchedAt: Date | null;
-  tmdbStaleAt: Date | null;
   letterboxdFetchedAt: Date | null;
   letterboxdStaleAt: Date | null;
 }): MovieRecord {
@@ -207,24 +161,11 @@ function mapMovie(movie: {
     letterboxdSlug: movie.letterboxdSlug,
     letterboxdFilmId: movie.letterboxdFilmId,
     tmdbId: movie.tmdbId,
-    resolutionStatus: mapResolutionStatus(movie.resolutionStatus),
-    title: movie.tmdbTitle ?? movie.title,
+    resolutionStatus: movie.resolutionStatus.toLowerCase() as MovieRecord["resolutionStatus"],
+    title: movie.title,
     year: movie.year,
-    tmdbTitle: movie.tmdbTitle,
-    tmdbOriginalTitle: movie.tmdbOriginalTitle,
-    tmdbOverview: movie.tmdbOverview,
-    tmdbReleaseDate: movie.tmdbReleaseDate,
-    tmdbRuntimeMinutes: movie.tmdbRuntimeMinutes,
-    tmdbGenres: movie.tmdbGenres,
-    tmdbVoteAverage: movie.tmdbVoteAverage,
-    tmdbPosterPath: movie.tmdbPosterPath,
-    tmdbBackdropPath: movie.tmdbBackdropPath,
-    letterboxdPosterUrls: movie.letterboxdPosterUrls,
+    letterboxdPoster: movie.letterboxdPoster,
     letterboxdRating: movie.letterboxdRating,
-    tmdb: {
-      fetchedAt: movie.tmdbFetchedAt,
-      staleAt: movie.tmdbStaleAt,
-    },
     letterboxd: {
       fetchedAt: movie.letterboxdFetchedAt,
       staleAt: movie.letterboxdStaleAt,
@@ -246,8 +187,4 @@ function mapNetworkMember(edge: {
     displayName: edge.displayName ?? edge.member.displayName,
     avatarUrl: edge.avatarUrl ?? edge.member.avatarUrl,
   };
-}
-
-function mapResolutionStatus(value: string) {
-  return value.toLowerCase() as ListItemRecord["resolutionStatus"];
 }

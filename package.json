@@ -18,7 +18,9 @@
     "db:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
     "db:test": "tsx scripts/test-database.ts",
-    "api:smoke": "node scripts/smoke-deployed-api.mjs"
+    "db:rehearse": "tsx scripts/rehearse-migrations.ts",
+    "api:smoke": "node scripts/smoke-deployed-api.mjs",
+    "jobs:backfill-movies": "tsx scripts/backfill-pending-movies.ts"
   },
   "dependencies": {
     "@next/env": "16.3.1",

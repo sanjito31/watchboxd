@@ -4,7 +4,6 @@ import type {
   JobStatus,
   JobType,
 } from "@/lib/jobs/contracts";
-import type { PosterSelection } from "@/lib/movies/posters";
 
 export const DEFAULT_PAGE = 1 as const;
 export const DEFAULT_PAGE_SIZE = 50 as const;
@@ -51,12 +50,18 @@ export interface ApiJobSummary {
   error: JobFailure | null;
 }
 
+export interface MovieEnrichmentMeta {
+  complete: boolean;
+  pendingSlugs: string[];
+  failedSlugs: string[];
+}
+
 export interface ApiCacheMeta {
   cache: "hit" | "stale";
   fetchedAt: string;
   staleAt: string;
-  /** Present only when stale data triggered a background refresh. */
-  refreshJob?: ApiJobSummary;
+  refreshJobs: ApiJobSummary[];
+  enrichment?: MovieEnrichmentMeta;
 }
 
 export interface ApiDataResponse<T> {
@@ -66,11 +71,7 @@ export interface ApiDataResponse<T> {
 
 export interface ApiAcceptedResponse {
   data: null;
-  meta: {
-    cache: "miss";
-    /** At least one job is required; overlap may return several. */
-    jobs: ApiJobSummary[];
-  };
+  meta: { cache: "miss"; jobs: ApiJobSummary[] };
 }
 
 export interface ApiJobResponse {
@@ -78,7 +79,6 @@ export interface ApiJobResponse {
 }
 
 export type JobApiResponse = ApiJobResponse | ApiErrorResponse;
-
 export type ApiResourceResponse<T> =
   | ApiDataResponse<T>
   | ApiAcceptedResponse
@@ -88,18 +88,8 @@ export interface PaginationMeta {
   page: number;
   pageSize: number;
   total: number;
-  /** Kept at 1 for an empty result to preserve the current UI behavior. */
   totalPages: number;
 }
-
-export const MOVIE_RESOLUTION_STATUSES = [
-  "pending",
-  "resolved",
-  "unresolved",
-  "ambiguous",
-] as const;
-export type MovieResolutionStatus =
-  (typeof MOVIE_RESOLUTION_STATUSES)[number];
 
 export interface ProfileSummaryDto {
   username: string;
@@ -111,57 +101,31 @@ export interface ProfileDto extends ProfileSummaryDto {
   letterboxdUrl: string;
 }
 
-export interface MovieSummaryDto extends PosterSelection {
-  letterboxdFilmId: number | null;
-  tmdbId: number | null;
+export interface MovieDto {
   letterboxdSlug: string;
-  letterboxdUrl: string;
   title: string;
   year: number | null;
-  resolutionStatus: MovieResolutionStatus;
+  letterboxdFilmId: number | null;
+  tmdbId: number | null;
+  letterboxdPoster: string | null;
   letterboxdRating: number | null;
 }
 
-export interface MovieDto extends MovieSummaryDto {
-  originalTitle: string | null;
-  overview: string | null;
-  releaseDate: string | null;
-  runtimeMinutes: number | null;
-  genres: string[];
-  tmdbVoteAverage: number | null;
-  backdropUrl: string | null;
-}
-
-export interface WatchlistItemDto {
-  /** Zero-based absolute order in the scraped watchlist snapshot. */
+export interface ListItemDto {
   position: number;
-  sourceTitle: string;
-  sourceSlug: string;
-  sourceYear: number | null;
-  resolutionStatus: MovieResolutionStatus;
-  movie: MovieSummaryDto;
+  movie: MovieDto;
 }
 
 export interface WatchlistDto {
   user: ProfileSummaryDto;
-  items: WatchlistItemDto[];
+  items: ListItemDto[];
   filmCount: number;
   pagination: PaginationMeta;
 }
 
-export interface WatchedItemDto {
-  /** Zero-based absolute order in the deduplicated watched snapshot. */
-  position: number;
-  sourceTitle: string;
-  sourceSlug: string;
-  sourceYear: number | null;
-  resolutionStatus: MovieResolutionStatus;
-  movie: MovieSummaryDto;
-}
-
 export interface WatchedDto {
   user: ProfileSummaryDto;
-  items: WatchedItemDto[];
+  items: ListItemDto[];
   filmCount: number;
   pagination: PaginationMeta;
 }
@@ -176,7 +140,7 @@ export interface NetworkDto {
   truncated: boolean;
 }
 
-export interface OverlapFilmDto extends MovieSummaryDto {
+export interface OverlapFilmDto extends MovieDto {
   presentFor: ProfileSummaryDto[];
   overlapCount: number;
   partySize: number;
