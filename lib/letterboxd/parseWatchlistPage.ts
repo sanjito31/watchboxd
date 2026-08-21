@@ -56,7 +56,6 @@ export function parseFilmGridHtml(html: string): LetterboxdFilmGridItem[] {
       sourceTitle: title,
       sourceSlug: slug,
       sourceYear: year ?? null,
-      resolutionStatus: "pending",
       letterboxdFilmId,
       letterboxdPosterUrls: allPosterUrls,
       slug,

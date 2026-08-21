@@ -13,8 +13,12 @@ import {
   parseCanonicalResourceKey,
 } from "./contracts";
 
-const REPUBLISH_AFTER_MS = 60_000;
+const RECLAIM_UNCLAIMED_DEVELOPMENT_AFTER_MS = 15_000;
+const RECLAIM_UNCLAIMED_DEPLOYED_AFTER_MS = 5 * 60_000;
 const RECLAIM_RUNNING_AFTER_MS = 5 * 60_000;
+const EXPIRED_UNCLAIMED_JOB_MESSAGE =
+  "Queued job was not claimed before its delivery lease expired";
+const EXPIRED_RUNNING_JOB_MESSAGE = "Running job lease expired before completion";
 
 export type JobClient = Pick<PrismaClient, "scrapeJob">;
 
@@ -70,7 +74,7 @@ export async function createOrReuseJob(
     };
   }
 
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const job = await client.scrapeJob.create({
         data: {
@@ -97,13 +101,65 @@ export async function createOrReuseJob(
 
       if (existing) {
         const job = fromDatabaseJob(existing);
+        const reclaimUnclaimedAfterMs =
+          job.environment === "development"
+            ? RECLAIM_UNCLAIMED_DEVELOPMENT_AFTER_MS
+            : RECLAIM_UNCLAIMED_DEPLOYED_AFTER_MS;
+        if (
+          job.status === "queued" &&
+          job.attempts === 0 &&
+          now.getTime() - job.updatedAt.getTime() >= reclaimUnclaimedAfterMs
+        ) {
+          // A queue callback can fail before our handler is invoked (for
+          // example, when the queue can no longer find the published message).
+          // Reusing the same row would also reuse its idempotency key, so retire
+          // it and create a fresh job/message instead.
+          const expired = await client.scrapeJob.updateMany({
+            where: {
+              id: job.id,
+              status: "QUEUED",
+              attempts: 0,
+              updatedAt: {
+                lte: new Date(now.getTime() - reclaimUnclaimedAfterMs),
+              },
+            },
+            data: {
+              status: "FAILED",
+              errorCode: "TIMEOUT",
+              errorMessage: EXPIRED_UNCLAIMED_JOB_MESSAGE,
+              finishedAt: now,
+              updatedAt: now,
+            },
+          });
+          if (expired.count === 1) continue;
+        }
+        if (
+          job.status === "running" &&
+          job.startedAt &&
+          now.getTime() - job.startedAt.getTime() >= RECLAIM_RUNNING_AFTER_MS
+        ) {
+          const expired = await client.scrapeJob.updateMany({
+            where: {
+              id: job.id,
+              status: "RUNNING",
+              startedAt: {
+                lte: new Date(now.getTime() - RECLAIM_RUNNING_AFTER_MS),
+              },
+            },
+            data: {
+              status: "FAILED",
+              errorCode: "TIMEOUT",
+              errorMessage: EXPIRED_RUNNING_JOB_MESSAGE,
+              finishedAt: now,
+              updatedAt: now,
+            },
+          });
+          if (expired.count === 1) continue;
+        }
         return {
           job,
           created: false,
-          shouldPublish:
-            job.status === "queued" &&
-            job.queueMessageId === null &&
-            now.getTime() - job.updatedAt.getTime() >= REPUBLISH_AFTER_MS,
+          shouldPublish: false,
         };
       }
       // The conflicting active row may have completed between the INSERT and
@@ -239,7 +295,7 @@ function assertIdentity(identity: JobIdentity): void {
   }
 }
 
-function fromDatabaseJob(job: ScrapeJob): JobRecord {
+export function fromDatabaseJob(job: ScrapeJob): JobRecord {
   return {
     id: job.id,
     environment: fromDatabaseEnum<JobEnvironment>(job.environment),

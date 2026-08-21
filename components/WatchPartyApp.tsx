@@ -196,14 +196,6 @@ export function WatchPartyApp() {
     return result;
   }, [members, overlap.jobs, overlap.status]);
 
-  const partialFilms =
-    overlap.data?.films.filter(
-      (film) => film.resolutionStatus !== "resolved"
-    ) ?? [];
-  const pendingFilms = partialFilms.filter(
-    (film) => film.resolutionStatus === "pending"
-  );
-
   async function handleCopyLink() {
     const ok = await copyShareLink();
     setCopyOk(ok);
@@ -374,28 +366,6 @@ export function WatchPartyApp() {
                   >
                     Check for updates
                   </button>
-                </div>
-              )}
-              {partialFilms.length > 0 && (
-                <div
-                  className="rounded-lg border border-lb-ocean bg-lb-charcoal px-4 py-3 text-sm text-lb-cloud"
-                  role="status"
-                >
-                  {pendingFilms.length > 0
-                    ? `${pendingFilms.length} ${
-                        pendingFilms.length === 1 ? "film is" : "films are"
-                      } still being enriched.`
-                    : "Some films have limited metadata."}{" "}
-                  Available titles and poster fallbacks are shown now.
-                  {pendingFilms.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={overlap.retry}
-                      className="ml-2 font-medium text-lb-vivid hover:underline"
-                    >
-                      Refresh details
-                    </button>
-                  )}
                 </div>
               )}
               <OverlapPagination

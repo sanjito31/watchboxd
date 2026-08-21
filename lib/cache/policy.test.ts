@@ -14,8 +14,7 @@ describe("cache policy", () => {
       network: 24 * 60 * 60 * 1_000,
       watchlist: 6 * 60 * 60 * 1_000,
       watched: 6 * 60 * 60 * 1_000,
-      letterboxdRating: 24 * 60 * 60 * 1_000,
-      tmdbMetadata: 30 * 24 * 60 * 60 * 1_000,
+      movie: 24 * 60 * 60 * 1_000,
       notFound: 60 * 60 * 1_000,
     });
   });

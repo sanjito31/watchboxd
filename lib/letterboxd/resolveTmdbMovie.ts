@@ -31,7 +31,7 @@ export async function resolveLetterboxdMovieByTmdbId(
   return { letterboxdSlug: slug, html: page.html };
 }
 
-function filmSlugFromCanonicalHtml(html: string): string | null {
+export function filmSlugFromCanonicalHtml(html: string): string | null {
   const canonicalUrl = cheerio
     .load(html)('link[rel="canonical"]')
     .first()
@@ -39,7 +39,7 @@ function filmSlugFromCanonicalHtml(html: string): string | null {
   return canonicalUrl ? filmSlugFromUrl(canonicalUrl) : null;
 }
 
-function filmSlugFromUrl(value: string): string | null {
+export function filmSlugFromUrl(value: string): string | null {
   let url: URL;
   try {
     url = new URL(value, LETTERBOXD_BASE);

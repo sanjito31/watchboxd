@@ -13,9 +13,10 @@ datasource db {
   provider = "postgresql"
 }
 
-// Migration strategy frozen for Agent A:
-// - Generate the initial Prisma migration from this schema; do not use db push.
-// - Add the partial unique index below by hand because Prisma cannot express it:
+// Migration strategy:
+// - Use reviewed Prisma migrations; do not use db push.
+// - Keep the partial unique index below in hand-authored SQL because Prisma
+//   cannot express it:
 //   CREATE UNIQUE INDEX "ScrapeJob_one_active_per_resource"
 //   ON "ScrapeJob" ("environment", "type", "resourceKey")
 //   WHERE "status" IN ('queued', 'running');
@@ -24,10 +25,9 @@ datasource db {
 // - Keep the model, enum, column, and explicit index names in this file stable.
 
 enum MovieResolutionStatus {
-  PENDING    @map("pending")
-  RESOLVED   @map("resolved")
-  UNRESOLVED @map("unresolved")
-  AMBIGUOUS  @map("ambiguous")
+  PENDING  @map("pending")
+  RESOLVED @map("resolved")
+  FAILED   @map("failed")
 }
 
 enum NetworkRelationship {
@@ -92,27 +92,16 @@ model LetterboxdUser {
 }
 
 model Movie {
-  id                   BigInt                @id @default(autoincrement())
-  letterboxdSlug       String                @unique(map: "Movie_letterboxdSlug_key")
-  letterboxdFilmId     Int?                  @unique(map: "Movie_letterboxdFilmId_key")
-  tmdbId               Int?                  @unique(map: "Movie_tmdbId_key")
-  resolutionStatus     MovieResolutionStatus @default(PENDING)
-  title                String
-  year                 Int?
-  tmdbTitle            String?
-  tmdbOriginalTitle    String?
-  tmdbOverview         String?
-  tmdbReleaseDate      DateTime?             @db.Date
-  tmdbRuntimeMinutes   Int?
-  tmdbGenres           String[]              @default([])
-  tmdbVoteAverage      Float?
-  tmdbPosterPath       String?
-  tmdbBackdropPath     String?
-  letterboxdPosterUrls String[]              @default([])
-  letterboxdRating     Float?
+  id               BigInt                @id @default(autoincrement())
+  letterboxdSlug   String                @unique(map: "Movie_letterboxdSlug_key")
+  letterboxdFilmId Int?                  @unique(map: "Movie_letterboxdFilmId_key")
+  tmdbId           Int?                  @unique(map: "Movie_tmdbId_key")
+  resolutionStatus MovieResolutionStatus @default(PENDING)
+  title            String
+  year             Int?
+  letterboxdPoster String?
+  letterboxdRating Float?
 
-  tmdbFetchedAt       DateTime? @db.Timestamptz(3)
-  tmdbStaleAt         DateTime? @db.Timestamptz(3)
   letterboxdFetchedAt DateTime? @db.Timestamptz(3)
   letterboxdStaleAt   DateTime? @db.Timestamptz(3)
 
@@ -121,21 +110,25 @@ model Movie {
 
   watchlistItems WatchlistItem[]
   watchedItems   WatchedItem[]
+  aliases        MovieAlias[]
 
   @@index([resolutionStatus], map: "Movie_resolutionStatus_idx")
 }
 
+model MovieAlias {
+  slug    String @id
+  movieId BigInt
+
+  movie Movie @relation(fields: [movieId], references: [id], onDelete: Cascade)
+
+  @@index([movieId], map: "MovieAlias_movieId_idx")
+}
+
 model WatchlistItem {
-  id               BigInt                @id @default(autoincrement())
-  userId           BigInt
-  movieId          BigInt
-  position         Int
-  sourceTitle      String
-  sourceSlug       String
-  sourceYear       Int?
-  resolutionStatus MovieResolutionStatus @default(PENDING)
-  createdAt        DateTime              @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime              @updatedAt @db.Timestamptz(3)
+  id       BigInt @id @default(autoincrement())
+  userId   BigInt
+  movieId  BigInt
+  position Int
 
   user  LetterboxdUser @relation(fields: [userId], references: [id], onDelete: Cascade)
   movie Movie          @relation(fields: [movieId], references: [id], onDelete: Cascade)
@@ -146,16 +139,10 @@ model WatchlistItem {
 }
 
 model WatchedItem {
-  id               BigInt                @id @default(autoincrement())
-  userId           BigInt
-  movieId          BigInt
-  position         Int
-  sourceTitle      String
-  sourceSlug       String
-  sourceYear       Int?
-  resolutionStatus MovieResolutionStatus @default(PENDING)
-  createdAt        DateTime              @default(now()) @db.Timestamptz(3)
-  updatedAt        DateTime              @updatedAt @db.Timestamptz(3)
+  id       BigInt @id @default(autoincrement())
+  userId   BigInt
+  movieId  BigInt
+  position Int
 
   user  LetterboxdUser @relation(fields: [userId], references: [id], onDelete: Cascade)
   movie Movie          @relation(fields: [movieId], references: [id], onDelete: Cascade)

@@ -327,7 +327,19 @@ function isCacheMeta(value: unknown): value is ApiCacheMeta {
     isObject(value) &&
     (value.cache === "hit" || value.cache === "stale") &&
     typeof value.fetchedAt === "string" &&
-    typeof value.staleAt === "string"
+    typeof value.staleAt === "string" &&
+    (!("enrichment" in value) || isMovieEnrichmentMeta(value.enrichment))
+  );
+}
+
+function isMovieEnrichmentMeta(value: unknown): boolean {
+  return (
+    isObject(value) &&
+    typeof value.complete === "boolean" &&
+    Array.isArray(value.pendingSlugs) &&
+    value.pendingSlugs.every((slug) => typeof slug === "string") &&
+    Array.isArray(value.failedSlugs) &&
+    value.failedSlugs.every((slug) => typeof slug === "string")
   );
 }
 

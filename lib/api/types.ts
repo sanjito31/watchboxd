@@ -1,5 +1,4 @@
 import type {
-  MovieResolutionStatus,
   NetworkDto,
   ProfileDto,
   ProfileSummaryDto,
@@ -30,30 +29,16 @@ export interface MovieRecord {
   letterboxdSlug: string;
   letterboxdFilmId: number | null;
   tmdbId: number | null;
-  resolutionStatus: MovieResolutionStatus;
+  resolutionStatus: "pending" | "resolved" | "failed";
   title: string;
   year: number | null;
-  tmdbTitle: string | null;
-  tmdbOriginalTitle: string | null;
-  tmdbOverview: string | null;
-  tmdbReleaseDate: Date | null;
-  tmdbRuntimeMinutes: number | null;
-  tmdbGenres: string[];
-  tmdbVoteAverage: number | null;
-  tmdbPosterPath: string | null;
-  tmdbBackdropPath: string | null;
-  letterboxdPosterUrls: string[];
+  letterboxdPoster: string | null;
   letterboxdRating: number | null;
-  tmdb: CacheStamp;
   letterboxd: CacheStamp;
 }
 
 export interface ListItemRecord {
   position: number;
-  sourceTitle: string;
-  sourceSlug: string;
-  sourceYear: number | null;
-  resolutionStatus: MovieResolutionStatus;
   movie: MovieRecord;
 }
 

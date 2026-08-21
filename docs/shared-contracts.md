@@ -1,7 +1,6 @@
 # Shared contracts
 
-Status: **frozen on 2026-08-19** for the parallel implementation phase in
-[`PLAN.md`](../PLAN.md).
+Status: updated on **2026-08-21** for the Letterboxd-only cache.
 
 The source-of-truth contract files are:
 
@@ -11,7 +10,14 @@ The source-of-truth contract files are:
   `scrape-jobs-v1` message shape.
 - `lib/api/contracts.ts` for all public v1 response envelopes and DTOs.
 - `lib/cache/policy.ts` for TTLs and freshness boundary behavior.
-- `lib/movies/posters.ts` for poster selection and browser fallback ordering.
+- `lib/movies/posters.ts` for the local poster placeholder.
+
+Watchlist and watched data responses may contain provisional `MovieDto` values.
+Their page-scoped `meta.enrichment` object distinguishes pending and failed
+movie slugs from authoritative nullable movie fields. Only a missing list
+snapshot returns `202`; child movie enrichment does not block a completed list
+response. List requests do not create, inspect, or refresh per-movie jobs;
+individual movie routes own movie freshness and recovery.
 
 ## Database migration contract
 
@@ -26,6 +32,8 @@ The source-of-truth contract files are:
   `(environment, type, resourceKey)` while status is `queued` or `running`.
 - Public cache tables intentionally have RLS enabled with no public policies.
   Prisma's server-side Postgres connection is the only runtime data path.
+- Expansion and contraction are separate ordered migrations. They deploy in
+  one maintenance window only after old application and queue workers stop.
 
 ## Ownership after the freeze
 
@@ -33,7 +41,7 @@ The source-of-truth contract files are:
 | --- | --- |
 | Lead/shared | The five source-of-truth files above and this freeze record |
 | Agent A: database and queue | Prisma migrations/tests, `lib/prisma.ts`, `lib/jobs/` except `contracts.ts`, `app/api/queues/scrape-jobs/route.ts`, `vercel.json`, queue dependencies; schema changes remain lead-gated |
-| Agent B: providers | `lib/letterboxd/`, `lib/tmdb/`, provider fixtures and tests |
+| Providers | `lib/letterboxd/`, provider fixtures and tests |
 | Agent C: API/cache/overlap | `app/api/v1/`, `lib/api/` except `contracts.ts`, excluding the private queue consumer; cache-policy changes remain lead-gated |
 | Agent D: frontend | `components/`, `lib/hooks/`, browser-facing UI types and tests |
 

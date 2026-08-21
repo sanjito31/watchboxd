@@ -19,8 +19,13 @@ import {
   prepareJobSnapshot,
   type JobWorkerRegistry,
 } from "./workers";
+import { publishScrapeJob } from "./publisher";
+import type { JobRecord } from "./repository";
 
-type ConsumerPrisma = Pick<PrismaClient, "$transaction" | "scrapeJob">;
+type ConsumerPrisma = Pick<
+  PrismaClient,
+  "$transaction" | "scrapeJob" | "movie"
+>;
 
 export interface QueueConsumerDependencies {
   prisma?: ConsumerPrisma;
@@ -55,18 +60,29 @@ export async function processScrapeQueueMessage(
   }
 
   const job = await claimJobDelivery(message.jobId, prisma);
-  if (!job || job.status !== "running") return;
+  if (!job || job.status !== "running") {
+    // A queue redelivery can arrive after the previous callback claimed the
+    // row but before it restored QUEUED state (for example, if the DB pool was
+    // unavailable during error handling). Acknowledging here would strand the
+    // RUNNING row forever, so keep the durable message alive until the lease
+    // can be reclaimed.
+    const latest = await getJobById(message.jobId, prisma);
+    if (latest?.status === "running") {
+      throw new QueueDeliveryRetryError(30);
+    }
+    return;
+  }
 
   try {
-    // All Letterboxd/TMDB work completes here, before the transaction starts.
+    // All upstream Letterboxd work completes before the transaction starts.
     const prepared = await prepareJobSnapshot(
       job,
       dependencies.workers ?? createDefaultWorkerRegistry()
     );
     const now = new Date();
 
-    await prisma.$transaction(async (transaction) => {
-      await prepared.persist(transaction);
+    const childJobs = await prisma.$transaction(async (transaction) => {
+      const persistedChildren = await prepared.persist(transaction);
       const completed = await transaction.scrapeJob.updateMany({
         where: { id: job.id, status: "RUNNING" },
         data: {
@@ -80,17 +96,19 @@ export async function processScrapeQueueMessage(
       if (completed.count !== 1) {
         throw new Error("Scrape job lost its running lease");
       }
+      return persistedChildren ?? [];
     });
+    await publishWithConcurrency(childJobs, 4, prisma);
   } catch (error) {
     const classified = classifyJobError(error);
     if (!classified.retryable) {
-      await recordPermanentFailure(job.id, classified.failure, prisma);
+      await recordTerminalFailure(job, classified.failure, prisma);
       return;
     }
 
     if (metadata.deliveryCount >= MAX_JOB_DELIVERIES) {
-      await recordPermanentFailure(
-        job.id,
+      await recordTerminalFailure(
+        job,
         sanitizeJobFailure(
           "attempts_exhausted",
           `Maximum deliveries exhausted: ${classified.failure.message}`
@@ -107,13 +125,72 @@ export async function processScrapeQueueMessage(
   }
 }
 
+async function recordTerminalFailure(
+  job: JobRecord,
+  failure: Parameters<typeof recordPermanentFailure>[1],
+  prisma: ConsumerPrisma
+): Promise<void> {
+  await prisma.$transaction(async (transaction) => {
+    await markPendingMovieFailed(job, transaction);
+    await recordPermanentFailure(job.id, failure, transaction);
+  });
+}
+
+async function publishWithConcurrency(
+  jobs: JobRecord[],
+  concurrency: number,
+  prisma: ConsumerPrisma
+): Promise<void> {
+  if (jobs.length === 0) return;
+  let index = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, jobs.length) }, async () => {
+      while (index < jobs.length) {
+        const child = jobs[index++]!;
+        try {
+          // Publish immediately. The Vercel consumer group's maximum
+          // concurrency provides global backpressure during processing.
+          await publishScrapeJob(child, { client: prisma });
+        } catch {
+          // A later request for the pending movie will create a fresh job.
+        }
+      }
+    })
+  );
+}
+
+async function markPendingMovieFailed(
+  job: Pick<JobRecord, "type" | "resourceKey">,
+  prisma: Pick<PrismaClient, "movie">
+): Promise<void> {
+  if (job.type !== "movie") return;
+  const identifier = job.resourceKey.slice("movie:".length);
+  if (/^tmdb_\d+$/.test(identifier)) {
+    await prisma.movie.updateMany({
+      where: {
+        tmdbId: Number.parseInt(identifier.slice(5), 10),
+        resolutionStatus: "PENDING",
+      },
+      data: { resolutionStatus: "FAILED" },
+    });
+    return;
+  }
+  await prisma.movie.updateMany({
+    where: {
+      resolutionStatus: "PENDING",
+      OR: [
+        { letterboxdSlug: identifier },
+        { aliases: { some: { slug: identifier } } },
+      ],
+    },
+    data: { resolutionStatus: "FAILED" },
+  });
+}
+
 export function queueRetryDirective(
   error: unknown,
   metadata: Pick<MessageMetadata, "deliveryCount">
 ): RetryDirective {
-  if (metadata.deliveryCount >= MAX_JOB_DELIVERIES) {
-    return { acknowledge: true };
-  }
   const requested =
     error instanceof QueueDeliveryRetryError ? error.retryAfterSeconds : undefined;
   return {

@@ -35,7 +35,6 @@ describe("parseWatchlistHtml", () => {
       sourceTitle: "Interstellar",
       sourceSlug: "interstellar",
       sourceYear: 2014,
-      resolutionStatus: "pending",
       letterboxdFilmId: 157336,
       slug: "interstellar",
       title: "Interstellar",
@@ -50,7 +49,6 @@ describe("parseWatchlistHtml", () => {
     expect(films.find((f) => f.slug === "inception")).toBeDefined();
     expect(films.find((f) => f.slug === "no-direct-id")).toMatchObject({
       letterboxdFilmId: null,
-      resolutionStatus: "pending",
       letterboxdPosterUrls: [
         "https://a.ltrbxd.com/legacy/no-direct-id.jpg",
       ],

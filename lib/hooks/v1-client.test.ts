@@ -226,6 +226,26 @@ describe("fetchV1Resource", () => {
       })
     );
   });
+
+  it("preserves valid partial-movie enrichment metadata", async () => {
+    const enrichment = {
+      complete: false,
+      pendingSlugs: ["waiting"],
+      failedSlugs: ["unavailable"],
+    };
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(
+      jsonResponse({
+        data: { items: [] },
+        meta: { ...meta, refreshJobs: [], enrichment },
+      })
+    );
+
+    await expect(
+      fetchV1Resource<{ items: unknown[] }>("/api/v1/users/alice/watched", {
+        fetcher,
+      })
+    ).resolves.toMatchObject({ meta: { enrichment } });
+  });
 });
 
 describe("poll timing helpers", () => {
@@ -252,4 +272,3 @@ function jsonResponse(
     headers: { "Content-Type": "application/json", ...headers },
   });
 }
-

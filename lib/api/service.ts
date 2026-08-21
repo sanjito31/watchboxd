@@ -4,8 +4,9 @@ import type {
   ApiErrorResponse,
   ApiJobResponse,
   ApiJobSummary,
+  ListItemDto,
+  MovieEnrichmentMeta,
   MovieDto,
-  MovieSummaryDto,
   NetworkDto,
   OverlapDto,
   OverlapFilmDto,
@@ -16,21 +17,12 @@ import type {
   WatchlistDto,
 } from "@/lib/api/contracts";
 import { classifyFreshness } from "@/lib/cache/policy";
-import {
-  type JobFailureCode,
-  type JobType,
-} from "@/lib/jobs/contracts";
-import {
-  DEFAULT_POSTER_PLACEHOLDER_URL,
-  selectPoster,
-  TMDB_IMAGE_BASE_URL,
-} from "@/lib/movies/posters";
+import type { JobFailureCode, JobType } from "@/lib/jobs/contracts";
 import { buildTmdbMovieJobIdentifier } from "@/lib/movies/jobIdentifier";
 import type {
   ApiRepository,
   CacheStamp,
   JobGateway,
-  ListItemRecord,
   MovieRecord,
   StoredJobRecord,
   UserListRecord,
@@ -43,7 +35,6 @@ type ResourceResult<T> =
   | ApiErrorResponse;
 
 const LETTERBOXD_BASE_URL = "https://letterboxd.com";
-const TMDB_BACKDROP_SIZE = "w1280";
 
 export class ApiService {
   constructor(
@@ -57,12 +48,15 @@ export class ApiService {
     if (!user || classifyFreshness(user.profile, this.now()) === "missing") {
       return this.missOrNotFound("profile", username);
     }
-
-    const data: ProfileDto = {
-      ...toProfileSummary(user),
-      letterboxdUrl: `${LETTERBOXD_BASE_URL}/${user.username}/`,
-    };
-    return this.cachedResource(data, user.profile, "profile", username);
+    return this.cachedResource(
+      {
+        ...toProfileSummary(user),
+        letterboxdUrl: `${LETTERBOXD_BASE_URL}/${user.username}/`,
+      },
+      user.profile,
+      "profile",
+      username
+    );
   }
 
   async getWatchlist(
@@ -74,20 +68,7 @@ export class ApiService {
     if (!list || classifyFreshness(list.user.watchlist, this.now()) === "missing") {
       return this.missOrNotFound("watchlist", username);
     }
-
-    const pagination = paginate(list.items, page, pageSize);
-    const data: WatchlistDto = {
-      user: toProfileSummary(list.user),
-      items: pagination.items.map(toWatchlistItem),
-      filmCount: list.items.length,
-      pagination: pagination.meta,
-    };
-    return this.cachedResource(
-      data,
-      list.user.watchlist,
-      "watchlist",
-      username
-    );
+    return this.listResponse(list, "watchlist", username, page, pageSize);
   }
 
   async getWatched(
@@ -99,38 +80,22 @@ export class ApiService {
     if (!list || classifyFreshness(list.user.watched, this.now()) === "missing") {
       return this.missOrNotFound("watched", username);
     }
-
-    const pagination = paginate(list.items, page, pageSize);
-    const data: WatchedDto = {
-      user: toProfileSummary(list.user),
-      items: pagination.items.map(toWatchlistItem),
-      filmCount: list.items.length,
-      pagination: pagination.meta,
-    };
-    return this.cachedResource(data, list.user.watched, "watched", username);
+    return this.listResponse(list, "watched", username, page, pageSize);
   }
 
   async getNetwork(username: string): Promise<ResourceResult<NetworkDto>> {
     const network = await this.repository.getNetwork(username);
     const profileMissing =
-      !network ||
-      classifyFreshness(network.user.profile, this.now()) === "missing";
+      !network || classifyFreshness(network.user.profile, this.now()) === "missing";
     const networkMissing =
-      !network ||
-      classifyFreshness(network.user.network, this.now()) === "missing";
-
+      !network || classifyFreshness(network.user.network, this.now()) === "missing";
     if (profileMissing || networkMissing) {
       const jobs = await Promise.all([
-        ...(profileMissing
-          ? [this.jobs.ensureJob("profile", username)]
-          : []),
-        ...(networkMissing
-          ? [this.jobs.ensureJob("network", username)]
-          : []),
+        ...(profileMissing ? [this.jobs.ensureJob("profile", username)] : []),
+        ...(networkMissing ? [this.jobs.ensureJob("network", username)] : []),
       ]);
       const failed = jobs.find((job) => job.status === "failed");
-      if (failed) return failedJobResponse(failed);
-      return accepted(jobs);
+      return failed ? failedJobResponse(failed) : accepted(jobs);
     }
     return this.cachedResource(
       network.data,
@@ -142,29 +107,17 @@ export class ApiService {
 
   async getMovie(tmdbId: number): Promise<ResourceResult<MovieDto>> {
     const identifier = buildTmdbMovieJobIdentifier(tmdbId);
-    const movie = await this.repository.getMovieByTmdbId(tmdbId);
-    if (!movie) {
-      return this.missOrNotFound("movie", identifier);
-    }
-    const stamp = movieCacheStamp(movie);
-    if (classifyFreshness(stamp, this.now()) === "missing") {
-      return this.missOrNotFound("movie", identifier);
-    }
-    return this.cachedResource(toMovieDto(movie), stamp, "movie", identifier);
+    return this.movieResponse(
+      await this.repository.getMovieByTmdbId(tmdbId),
+      identifier
+    );
   }
 
-  async getMovieByLetterboxdSlug(
-    slug: string
-  ): Promise<ResourceResult<MovieDto>> {
-    const movie = await this.repository.getMovieByLetterboxdSlug(slug);
-    if (!movie) {
-      return this.missOrNotFound("movie", slug);
-    }
-    const stamp = movieCacheStamp(movie);
-    if (classifyFreshness(stamp, this.now()) === "missing") {
-      return this.missOrNotFound("movie", slug);
-    }
-    return this.cachedResource(toMovieDto(movie), stamp, "movie", slug);
+  async getMovieByLetterboxdSlug(slug: string): Promise<ResourceResult<MovieDto>> {
+    return this.movieResponse(
+      await this.repository.getMovieByLetterboxdSlug(slug),
+      slug
+    );
   }
 
   async getOverlap(
@@ -178,45 +131,24 @@ export class ApiService {
     );
     const missing = usernames.filter((username) => {
       const list = byUsername.get(username);
-      return (
-        !list ||
-        classifyFreshness(list.user.watchlist, this.now()) === "missing"
-      );
+      return !list || classifyFreshness(list.user.watchlist, this.now()) === "missing";
     });
-
     if (missing.length > 0) {
       const jobs = await Promise.all(
         missing.map((username) => this.jobs.ensureJob("watchlist", username))
       );
       const failed = jobs.find((job) => job.status === "failed");
-      if (failed) return failedJobResponse(failed);
-      return accepted(jobs);
+      return failed ? failedJobResponse(failed) : accepted(jobs);
     }
 
     const orderedLists = usernames.map(
       (username) => byUsername.get(username) as UserListRecord
     );
     const profiles = orderedLists.map((list) => toProfileSummary(list.user));
-    const groups = groupOverlap(orderedLists);
-    const pagination = paginate(groups, page, pageSize);
-
-    const enrichmentJobs = await Promise.all(
-      pagination.items
-        .filter(
-          (film) =>
-            classifyFreshness(movieCacheStampFromDtoSource(film), this.now()) ===
-            "missing"
-        )
-        .map((film) =>
-          this.jobs.ensureJob("movie", film.movie.letterboxdSlug)
-        )
-    );
-    const activeEnrichmentJobs = enrichmentJobs.filter(
-      (job) => job.status === "queued" || job.status === "running"
-    );
-    if (activeEnrichmentJobs.length > 0) {
-      return accepted(activeEnrichmentJobs);
-    }
+    const pagination = paginate(groupOverlap(orderedLists), page, pageSize);
+    const pageMovies = pagination.items.map((group) => group.movie);
+    const pendingResult = await this.pendingMovies(pageMovies);
+    if (pendingResult) return pendingResult;
 
     const data: OverlapDto = {
       users: profiles,
@@ -225,36 +157,111 @@ export class ApiService {
       ),
       pagination: pagination.meta,
     };
-
-    const stamp = aggregateStamps(
-      orderedLists.map((list) => list.user.watchlist)
-    );
-    const staleUsers = orderedLists.filter(
-      (list) => classifyFreshness(list.user.watchlist, this.now()) === "stale"
-    );
-    if (staleUsers.length === 0) {
-      return cached(data, stamp, "hit");
-    }
-
-    const refreshJobs = await Promise.all(
-      staleUsers.map((list) =>
-        this.jobs.ensureJob("watchlist", list.user.username)
-      )
-    );
-    return cached(data, stamp, "stale", toJobSummary(refreshJobs[0]!));
+    const listStamps = orderedLists.map((list) => list.user.watchlist);
+    const stamp = aggregateStamps([...listStamps, ...pageMovies.map(movieStamp)]);
+    const refreshJobs = await this.refreshStaleResources([
+      ...orderedLists.map((list) => ({
+        stamp: list.user.watchlist,
+        type: "watchlist" as const,
+        identifier: list.user.username,
+      })),
+      ...pageMovies.map((movie) => ({
+        stamp: movie.letterboxd,
+        type: "movie" as const,
+        identifier: movie.letterboxdSlug,
+      })),
+    ]);
+    return cached(data, stamp, refreshJobs);
   }
 
   async getJob(id: string): Promise<ApiJobResponse | ApiErrorResponse> {
     const job = await this.jobs.getJob(id);
-    if (!job) {
-      return {
-        error: {
-          code: "job_not_found",
-          message: "Job not found",
-        },
-      };
+    return job
+      ? { data: toJobSummary(job) }
+      : { error: { code: "job_not_found", message: "Job not found" } };
+  }
+
+  private async listResponse(
+    list: UserListRecord,
+    kind: "watchlist" | "watched",
+    username: string,
+    page: number,
+    pageSize: number
+  ): Promise<ResourceResult<WatchlistDto | WatchedDto>> {
+    const pagination = paginate(list.items, page, pageSize);
+    const pageMovies = pagination.items.map((item) => item.movie);
+
+    const listStamp =
+      kind === "watchlist" ? list.user.watchlist : list.user.watched;
+    const data = {
+      user: toProfileSummary(list.user),
+      items: pagination.items.map(toListItem),
+      filmCount: list.items.length,
+      pagination: pagination.meta,
+    };
+    const refreshJobs = await this.refreshStaleResources([
+      { stamp: listStamp, type: kind, identifier: username },
+    ]);
+    return cached(
+      data,
+      listStamp,
+      refreshJobs,
+      movieEnrichmentMeta(pageMovies)
+    );
+  }
+
+  private async movieResponse(
+    movie: MovieRecord | null,
+    identifier: string
+  ): Promise<ResourceResult<MovieDto>> {
+    if (!movie || movie.resolutionStatus !== "resolved") {
+      return this.missOrNotFound("movie", identifier);
     }
-    return { data: toJobSummary(job) };
+    return this.cachedResource(
+      toMovieDto(movie),
+      movie.letterboxd,
+      "movie",
+      movie.letterboxdSlug
+    );
+  }
+
+  private async pendingMovies(
+    movies: readonly MovieRecord[]
+  ): Promise<ApiAcceptedResponse | ApiErrorResponse | null> {
+    const pending = movies.filter((movie) => movie.resolutionStatus === "pending");
+    if (pending.length === 0) return null;
+    const jobs = await Promise.all(
+      pending.map((movie) =>
+        this.jobs.ensureJob("movie", movie.letterboxdSlug)
+      )
+    );
+    const failed = jobs.find((job) => job.status === "failed");
+    return failed ? failedJobResponse(failed) : accepted(jobs);
+  }
+
+  private async refreshStaleResources(
+    resources: readonly {
+      stamp: CacheStamp;
+      type: JobType;
+      identifier: string;
+    }[]
+  ): Promise<StoredJobRecord[]> {
+    const stale = resources.filter(
+      ({ stamp }) => classifyFreshness(stamp, this.now()) === "stale"
+    );
+    const unique = [
+      ...new Map(
+        stale.map((resource) => [
+          `${resource.type}:${resource.identifier}`,
+          resource,
+        ])
+      ).values(),
+    ];
+    return Promise.all(
+      unique.map((resource) =>
+        this.jobs.ensureJob(resource.type, resource.identifier)
+      )
+    );
   }
 
   private async cachedResource<T>(
@@ -263,11 +270,11 @@ export class ApiService {
     type: JobType,
     identifier: string
   ): Promise<ApiDataResponse<T>> {
-    if (classifyFreshness(stamp, this.now()) === "fresh") {
-      return cached(data, stamp, "hit");
-    }
-    const refreshJob = await this.jobs.ensureJob(type, identifier);
-    return cached(data, stamp, "stale", toJobSummary(refreshJob));
+    const jobs =
+      classifyFreshness(stamp, this.now()) === "stale"
+        ? [await this.jobs.ensureJob(type, identifier)]
+        : [];
+    return cached(data, stamp, jobs);
   }
 
   private async missOrNotFound(
@@ -282,19 +289,21 @@ export class ApiService {
 function cached<T>(
   data: T,
   stamp: CacheStamp,
-  cache: "hit" | "stale",
-  refreshJob?: ApiJobSummary
+  refreshJobs: readonly StoredJobRecord[],
+  enrichment?: MovieEnrichmentMeta
 ): ApiDataResponse<T> {
   if (!stamp.fetchedAt || !stamp.staleAt) {
     throw new Error("Cached response requires complete timestamps");
   }
+  const uniqueJobs = [...new Map(refreshJobs.map((job) => [job.id, job])).values()];
   return {
     data,
     meta: {
-      cache,
+      cache: uniqueJobs.length > 0 ? "stale" : "hit",
       fetchedAt: stamp.fetchedAt.toISOString(),
       staleAt: stamp.staleAt.toISOString(),
-      ...(refreshJob ? { refreshJob } : {}),
+      refreshJobs: uniqueJobs.map(toJobSummary),
+      ...(enrichment ? { enrichment } : {}),
     },
   };
 }
@@ -303,24 +312,19 @@ function accepted(jobs: readonly StoredJobRecord[]): ApiAcceptedResponse {
   const unique = [...new Map(jobs.map((job) => [job.id, job])).values()];
   return {
     data: null,
-    meta: {
-      cache: "miss",
-      jobs: unique.map(toJobSummary),
-    },
-  };
-}
-
-function resourceNotFound(): ApiErrorResponse {
-  return {
-    error: {
-      code: "resource_not_found",
-      message: "The requested Letterboxd resource was not found",
-    },
+    meta: { cache: "miss", jobs: unique.map(toJobSummary) },
   };
 }
 
 function failedJobResponse(job: StoredJobRecord): ApiErrorResponse {
-  if (job.errorCode === "not_found") return resourceNotFound();
+  if (job.errorCode === "not_found") {
+    return {
+      error: {
+        code: "resource_not_found",
+        message: "The requested Letterboxd resource was not found",
+      },
+    };
+  }
   if (job.errorCode === "rate_limited") {
     return {
       error: {
@@ -329,10 +333,7 @@ function failedJobResponse(job: StoredJobRecord): ApiErrorResponse {
       },
     };
   }
-  if (
-    job.errorCode === "upstream_unavailable" ||
-    job.errorCode === "timeout"
-  ) {
+  if (job.errorCode === "upstream_unavailable" || job.errorCode === "timeout") {
     return {
       error: {
         code: "upstream_unavailable",
@@ -360,10 +361,7 @@ export function toJobSummary(job: StoredJobRecord): ApiJobSummary {
     startedAt: job.startedAt?.toISOString() ?? null,
     finishedAt: job.finishedAt?.toISOString() ?? null,
     error: job.errorCode
-      ? {
-          code: job.errorCode,
-          message: sanitizedJobMessage(job.errorCode),
-        }
+      ? { code: job.errorCode, message: sanitizedJobMessage(job.errorCode) }
       : null,
   };
 }
@@ -390,77 +388,49 @@ function toProfileSummary(user: UserRecord): ProfileSummaryDto {
   };
 }
 
-function toWatchlistItem(item: ListItemRecord) {
-  return {
-    position: item.position,
-    sourceTitle: item.sourceTitle,
-    sourceSlug: item.sourceSlug,
-    sourceYear: item.sourceYear,
-    resolutionStatus: item.resolutionStatus,
-    movie: toMovieSummary(item.movie),
-  };
-}
-
-function toMovieSummary(movie: MovieRecord): MovieSummaryDto {
-  return {
-    ...selectPoster({
-      tmdbPosterPath: movie.tmdbPosterPath,
-      letterboxdPosterUrls: movie.letterboxdPosterUrls,
-      placeholderUrl: DEFAULT_POSTER_PLACEHOLDER_URL,
-    }),
-    letterboxdFilmId: movie.letterboxdFilmId,
-    tmdbId: movie.tmdbId,
-    letterboxdSlug: movie.letterboxdSlug,
-    letterboxdUrl: `${LETTERBOXD_BASE_URL}/film/${movie.letterboxdSlug}/`,
-    title: movie.title,
-    year: movie.year,
-    resolutionStatus: movie.resolutionStatus,
-    letterboxdRating: movie.letterboxdRating,
-  };
+function toListItem(item: { position: number; movie: MovieRecord }): ListItemDto {
+  return { position: item.position, movie: toMovieDto(item.movie) };
 }
 
 function toMovieDto(movie: MovieRecord): MovieDto {
   return {
-    ...toMovieSummary(movie),
-    originalTitle: movie.tmdbOriginalTitle,
-    overview: movie.tmdbOverview,
-    releaseDate: movie.tmdbReleaseDate?.toISOString().slice(0, 10) ?? null,
-    runtimeMinutes: movie.tmdbRuntimeMinutes,
-    genres: movie.tmdbGenres,
-    tmdbVoteAverage: movie.tmdbVoteAverage,
-    backdropUrl: movie.tmdbBackdropPath
-      ? `${TMDB_IMAGE_BASE_URL}/${TMDB_BACKDROP_SIZE}${
-          movie.tmdbBackdropPath.startsWith("/") ? "" : "/"
-        }${movie.tmdbBackdropPath}`
-      : null,
+    letterboxdSlug: movie.letterboxdSlug,
+    title: movie.title,
+    year: movie.year,
+    letterboxdFilmId: movie.letterboxdFilmId,
+    tmdbId: movie.tmdbId,
+    letterboxdPoster: movie.letterboxdPoster,
+    letterboxdRating: movie.letterboxdRating,
   };
 }
 
-function movieCacheStamp(movie: MovieRecord): CacheStamp {
-  return aggregateStamps([movie.tmdb, movie.letterboxd]);
+function movieStamp(movie: MovieRecord): CacheStamp {
+  return movie.letterboxd;
 }
 
-function movieCacheStampFromDtoSource(group: {
-  movie: MovieRecord;
-}): CacheStamp {
-  return movieCacheStamp(group.movie);
+function movieEnrichmentMeta(
+  movies: readonly MovieRecord[]
+): MovieEnrichmentMeta {
+  const pendingSlugs = movies
+    .filter((movie) => movie.resolutionStatus === "pending")
+    .map((movie) => movie.letterboxdSlug);
+  const failedSlugs = movies
+    .filter((movie) => movie.resolutionStatus === "failed")
+    .map((movie) => movie.letterboxdSlug);
+  return {
+    complete: pendingSlugs.length === 0 && failedSlugs.length === 0,
+    pendingSlugs,
+    failedSlugs,
+  };
 }
 
 function aggregateStamps(stamps: readonly CacheStamp[]): CacheStamp {
-  if (
-    stamps.length === 0 ||
-    stamps.some((stamp) => !stamp.fetchedAt || !stamp.staleAt)
-  ) {
+  if (stamps.length === 0 || stamps.some((stamp) => !stamp.fetchedAt || !stamp.staleAt)) {
     return { fetchedAt: null, staleAt: null };
   }
-
   return {
-    fetchedAt: new Date(
-      Math.min(...stamps.map((stamp) => stamp.fetchedAt!.getTime()))
-    ),
-    staleAt: new Date(
-      Math.min(...stamps.map((stamp) => stamp.staleAt!.getTime()))
-    ),
+    fetchedAt: new Date(Math.min(...stamps.map((stamp) => stamp.fetchedAt!.getTime()))),
+    staleAt: new Date(Math.min(...stamps.map((stamp) => stamp.staleAt!.getTime()))),
   };
 }
 
@@ -473,10 +443,10 @@ function groupOverlap(lists: readonly UserListRecord[]) {
       usernames: Set<string>;
     }
   >();
-
   for (const list of lists) {
     const profile = toProfileSummary(list.user);
     for (const item of list.items) {
+      if (item.movie.resolutionStatus === "failed") continue;
       const key =
         item.movie.tmdbId !== null
           ? `tmdb:${item.movie.tmdbId}`
@@ -494,16 +464,13 @@ function groupOverlap(lists: readonly UserListRecord[]) {
       }
     }
   }
-
   return [...groups.values()]
     .filter((group) => group.presentFor.length >= 2)
     .sort((a, b) => {
       const countDifference = b.presentFor.length - a.presentFor.length;
       return (
         countDifference ||
-        a.movie.title.localeCompare(b.movie.title, "en", {
-          sensitivity: "base",
-        })
+        a.movie.title.localeCompare(b.movie.title, "en", { sensitivity: "base" })
       );
     });
 }
@@ -514,7 +481,7 @@ function toOverlapFilm(
   partySize: number
 ): OverlapFilmDto {
   return {
-    ...toMovieSummary(movie),
+    ...toMovieDto(movie),
     presentFor,
     overlapCount: presentFor.length,
     partySize,
