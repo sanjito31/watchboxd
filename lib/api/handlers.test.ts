@@ -9,6 +9,7 @@ const serviceMocks = vi.hoisted(() => ({
   getMovieByLetterboxdSlug: vi.fn(),
   getOverlap: vi.fn(),
   getJob: vi.fn(),
+  requestJob: vi.fn(),
 }));
 
 vi.mock("@/lib/api/runtime", () => ({
@@ -24,6 +25,8 @@ import {
   getProfile,
   getWatched,
   getWatchlist,
+  manualJobOptions,
+  postJob,
 } from "@/lib/api/handlers";
 
 const JOB_ID = "00000000-0000-4000-8000-000000000001";
@@ -42,11 +45,13 @@ const job = {
 
 describe("v1 route handlers", () => {
   const previousOrigins = process.env.API_ALLOWED_ORIGINS;
+  const previousManualJobApiKey = process.env.MANUAL_JOB_API_KEY;
 
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.API_ALLOWED_ORIGINS =
       "https://app.example, https://other.example";
+    process.env.MANUAL_JOB_API_KEY = "test-manual-job-secret";
   });
 
   afterEach(() => {
@@ -54,6 +59,11 @@ describe("v1 route handlers", () => {
       delete process.env.API_ALLOWED_ORIGINS;
     } else {
       process.env.API_ALLOWED_ORIGINS = previousOrigins;
+    }
+    if (previousManualJobApiKey === undefined) {
+      delete process.env.MANUAL_JOB_API_KEY;
+    } else {
+      process.env.MANUAL_JOB_API_KEY = previousManualJobApiKey;
     }
   });
 
@@ -85,6 +95,77 @@ describe("v1 route handlers", () => {
 
     expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
     expect(response.headers.get("Vary")).toBe("Origin");
+  });
+
+  it("advertises POST and Authorization for manual-job preflight", () => {
+    const response = manualJobOptions(
+      request("https://api.example/api/v1/jobs", { method: "OPTIONS" })
+    );
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("Allow")).toBe("POST, OPTIONS");
+    expect(response.headers.get("Access-Control-Allow-Headers")).toBe(
+      "Authorization, Content-Type"
+    );
+  });
+
+  it("requires the configured bearer token for manual jobs", async () => {
+    const response = await postJob(
+      request("https://api.example/api/v1/jobs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "watched", identifier: "alice" }),
+      })
+    );
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({
+      error: { code: "unauthorized", message: "Unauthorized" },
+    });
+    expect(serviceMocks.requestJob).not.toHaveBeenCalled();
+  });
+
+  it("queues a normalized manual watched refresh even when cache is fresh", async () => {
+    const watchedJob = {
+      ...job,
+      type: "watched" as const,
+      resourceKey: "watched:alice" as const,
+    };
+    serviceMocks.requestJob.mockResolvedValue({
+      data: null,
+      meta: { cache: "miss", jobs: [watchedJob] },
+    });
+
+    const response = await postJob(
+      request("https://api.example/api/v1/jobs", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer test-manual-job-secret",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ type: "watched", identifier: " Alice " }),
+      })
+    );
+
+    expect(response.status).toBe(202);
+    expect(response.headers.get("Location")).toBe(watchedJob.statusUrl);
+    expect(serviceMocks.requestJob).toHaveBeenCalledWith("watched", "alice");
+  });
+
+  it("rejects invalid manual-job JSON before queue access", async () => {
+    const response = await postJob(
+      request("https://api.example/api/v1/jobs", {
+        method: "POST",
+        headers: { Authorization: "Bearer test-manual-job-secret" },
+        body: "not-json",
+      })
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: { code: "invalid_request" },
+    });
+    expect(serviceMocks.requestJob).not.toHaveBeenCalled();
   });
 
   it("returns 202 polling headers and normalized resource keys", async () => {
@@ -132,6 +213,7 @@ describe("v1 route handlers", () => {
           items: [
             {
               position: 0,
+              ...(kind === "watched" ? { userRating: 4.5 } : {}),
               movie: {
                 letterboxdSlug: "waiting",
                 title: "Waiting",

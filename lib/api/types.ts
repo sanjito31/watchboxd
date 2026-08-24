@@ -42,9 +42,13 @@ export interface ListItemRecord {
   movie: MovieRecord;
 }
 
-export interface UserListRecord {
+export interface WatchedListItemRecord extends ListItemRecord {
+  userRating: number | null;
+}
+
+export interface UserListRecord<TItem extends ListItemRecord = ListItemRecord> {
   user: UserRecord;
-  items: ListItemRecord[];
+  items: TItem[];
 }
 
 export interface NetworkRecord {
@@ -67,7 +71,9 @@ export interface StoredJobRecord {
 export interface ApiRepository {
   getUser(username: string): Promise<UserRecord | null>;
   getWatchlist(username: string): Promise<UserListRecord | null>;
-  getWatched(username: string): Promise<UserListRecord | null>;
+  getWatched(
+    username: string
+  ): Promise<UserListRecord<WatchedListItemRecord> | null>;
   getNetwork(username: string): Promise<NetworkRecord | null>;
   getMovieByTmdbId(tmdbId: number): Promise<MovieRecord | null>;
   getMovieByLetterboxdSlug(slug: string): Promise<MovieRecord | null>;

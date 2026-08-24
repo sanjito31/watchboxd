@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { LetterboxdFilmGridItem } from "@/lib/letterboxd";
 import { persistFilmGridSnapshot, persistMovieSnapshot } from "./workers";
 
 const fetchedAt = new Date("2026-08-20T12:00:00.000Z");
@@ -64,6 +65,27 @@ describe("film-grid persistence", () => {
     });
     expect(transaction.scrapeJob.createMany).not.toHaveBeenCalled();
   });
+
+  it("persists normalized user ratings on watched relationships", async () => {
+    const transaction = transactionMock();
+    const data = snapshot();
+    data.items[0]!.userRating = 4.5;
+
+    await persistFilmGridSnapshot(transaction as never, data, "watched", {
+      environment: "development",
+    });
+
+    expect(transaction.watchedItem.createMany).toHaveBeenCalledWith({
+      data: [
+        {
+          userId: BigInt(1),
+          movieId: BigInt(10),
+          position: 0,
+          userRating: 4.5,
+        },
+      ],
+    });
+  });
 });
 
 describe("movie persistence", () => {
@@ -99,7 +121,7 @@ describe("movie persistence", () => {
 });
 
 function snapshot() {
-  const item = {
+  const item: LetterboxdFilmGridItem = {
     slug: "interstellar",
     title: "Interstellar",
     year: 2014,
@@ -108,6 +130,7 @@ function snapshot() {
     sourceTitle: "Interstellar",
     sourceSlug: "interstellar",
     sourceYear: 2014,
+    userRating: null,
     letterboxdFilmId: 81371,
     letterboxdPosterUrls: ["https://a.ltrbxd.com/poster.jpg"],
   };
@@ -135,6 +158,10 @@ function transactionMock() {
       ]),
     },
     watchlistItem: {
+      deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
+      createMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
+    watchedItem: {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
       createMany: vi.fn().mockResolvedValue({ count: 1 }),
     },

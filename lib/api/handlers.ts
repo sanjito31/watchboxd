@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { apiService } from "@/lib/api/runtime";
 import {
   apiError,
@@ -10,6 +11,7 @@ import {
   isUuid,
   normalizeMovieSlug,
   normalizeUsername,
+  parseManualJobRequest,
   parseOverlapRequest,
   parsePagination,
   parseTmdbMovieId,
@@ -145,4 +147,41 @@ export async function getJob(
   }
 }
 
-export const OPTIONS = optionsResponse;
+export async function postJob(request: Request): Promise<Response> {
+  if (!isAuthorizedManualJobRequest(request)) {
+    return apiError(request, "unauthorized", "Unauthorized", 401);
+  }
+
+  try {
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return apiError(request, "invalid_request", "A valid JSON body is required", 400);
+    }
+    const job = parseManualJobRequest(body);
+    return resourceResponse(
+      request,
+      await apiService.requestJob(job.type, job.identifier)
+    );
+  } catch (error) {
+    return handleRouteError(request, error);
+  }
+}
+
+export function manualJobOptions(request: Request): Response {
+  return optionsResponse(request, "POST, OPTIONS");
+}
+
+function isAuthorizedManualJobRequest(request: Request): boolean {
+  const apiKey = process.env.MANUAL_JOB_API_KEY;
+  if (!apiKey) return false;
+
+  const actual = Buffer.from(request.headers.get("Authorization") ?? "");
+  const expected = Buffer.from(`Bearer ${apiKey}`);
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+export function OPTIONS(request: Request): Response {
+  return optionsResponse(request);
+}

@@ -29,7 +29,7 @@ import { fromDatabaseJob, type JobRecord } from "./repository";
 export type PersistenceTransaction = Prisma.TransactionClient;
 
 const PERSISTENCE_BATCH_SIZE = 100;
-const MAX_FILM_SNAPSHOT_ITEMS = 5_000;
+const MAX_FILM_SNAPSHOT_ITEMS = 20_000;
 const MAX_NETWORK_SNAPSHOT_MEMBERS = 1_500;
 
 export interface SnapshotJobWorker<TSnapshot> {
@@ -230,10 +230,11 @@ export async function persistFilmGridSnapshot(
     await transaction.watchedItem.deleteMany({ where: { userId: user.id } });
     if (relationships.length > 0) {
       await transaction.watchedItem.createMany({
-        data: relationships.map(({ movieId, position }) => ({
+        data: relationships.map(({ movieId, position, userRating }) => ({
           userId: user.id,
           movieId,
           position,
+          userRating,
         })),
       });
     }
@@ -253,6 +254,7 @@ interface MaterializedMovie {
   letterboxdSlug: string;
   resolutionStatus: "PENDING" | "RESOLVED" | "FAILED";
   position: number;
+  userRating: number | null;
 }
 
 export async function materializeMovies(
@@ -340,6 +342,7 @@ export async function materializeMovies(
       letterboxdSlug: movie.letterboxdSlug,
       resolutionStatus: movie.resolutionStatus,
       position: item.position,
+      userRating: item.userRating,
     };
   });
 }

@@ -9,6 +9,7 @@ export interface LetterboxdFilmGridItem extends Film {
   sourceTitle: string;
   sourceSlug: string;
   sourceYear: number | null;
+  userRating: number | null;
   letterboxdFilmId: number | null;
   letterboxdPosterUrls: string[];
 }

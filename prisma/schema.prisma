@@ -97,6 +97,7 @@ model Movie {
   letterboxdFilmId Int?                  @unique(map: "Movie_letterboxdFilmId_key")
   tmdbId           Int?                  @unique(map: "Movie_tmdbId_key")
   resolutionStatus MovieResolutionStatus @default(PENDING)
+  
   title            String
   year             Int?
   letterboxdPoster String?
@@ -108,12 +109,52 @@ model Movie {
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
+  // metadata       MovieMetadata?
+
   watchlistItems WatchlistItem[]
   watchedItems   WatchedItem[]
   aliases        MovieAlias[]
 
   @@index([resolutionStatus], map: "Movie_resolutionStatus_idx")
 }
+
+// model MovieMetadata {
+//   movieId             BigInt      @id
+
+//   runtimeMinutes      Int?
+//   overview            String?
+//   tmdbTitle           String?
+//   originalTitle       String?
+//   originalLanguage    String?
+//   tmdbReleaseDate     DateTime?   @db.Date
+//   tmdbVoteAverage     Float?
+//   tmdbPosterPath      String?
+//   tmdbBackdropPath    String?
+
+//   tmdbFetchedAt       DateTime    @db.Timestamptz(3)
+//   tmdbStaleAt         DateTime    @db.Timestamptz(3)
+
+//   movie  Movie        @relation(fields: [movieId], references: [id], onDelete: Cascade)
+//   genres MovieGenre[]
+// }
+
+// model Genre {
+//   id     Int    @id // TMDB genre ID
+//   name   String
+
+//   movies MovieGenre[]
+// }
+
+// model MovieGenre {
+//   movieId BigInt
+//   genreId Int
+
+//   movie    MovieMetadata @relation(fields: [movieId], references: [movieId], onDelete: Cascade)
+//   genre    Genre         @relation(fields: [genreId], references: [id], onDelete: Cascade)
+
+//   @@id([movieId, genreId])
+//   @@index([genreId])
+// }
 
 model MovieAlias {
   slug    String @id
@@ -139,10 +180,11 @@ model WatchlistItem {
 }
 
 model WatchedItem {
-  id       BigInt @id @default(autoincrement())
-  userId   BigInt
-  movieId  BigInt
-  position Int
+  id          BigInt @id @default(autoincrement())
+  userId      BigInt
+  movieId     BigInt
+  position    Int
+  userRating  Float?
 
   user  LetterboxdUser @relation(fields: [userId], references: [id], onDelete: Cascade)
   movie Movie          @relation(fields: [movieId], references: [id], onDelete: Cascade)

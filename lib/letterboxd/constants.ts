@@ -3,7 +3,7 @@ export const LETTERBOXD_BASE = "https://letterboxd.com";
 export const USERNAME_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 export const PAGE_DELAY_MS = 280;
-export const MAX_PAGES = 50;
+export const MAX_PAGES = 250;
 export const NETWORK_PAGE_DELAY_MS = 280;
 export const MAX_FOLLOWING_NETWORK_PAGES = 20;
 export const MAX_FOLLOWER_NETWORK_PAGES = 40;
@@ -21,4 +21,5 @@ export const SELECTORS = {
   itemSlug: "data-item-slug",
   image: "data-image",
   resolvablePosterPath: "data-resolvable-poster-path",
+  viewingData: "p.poster-viewingdata",
 } as const;

@@ -2,11 +2,17 @@ import {
   DEFAULT_OVERLAP_PAGE_SIZE,
   DEFAULT_PAGE,
   DEFAULT_PAGE_SIZE,
+  type ManualJobRequestDto,
   MAX_OVERLAP_USERS,
   MAX_PAGE_SIZE,
   MIN_OVERLAP_USERS,
 } from "@/lib/api/contracts";
-import { MAX_TMDB_MOVIE_ID } from "@/lib/movies/jobIdentifier";
+import { isJobType } from "@/lib/jobs/contracts";
+import {
+  buildTmdbMovieJobIdentifier,
+  MAX_TMDB_MOVIE_ID,
+  parseMovieJobIdentifier,
+} from "@/lib/movies/jobIdentifier";
 
 const RESOURCE_IDENTIFIER_PATTERN = /^[a-z0-9_-]+$/;
 
@@ -17,12 +23,47 @@ export class ApiValidationError extends Error {
       | "invalid_movie_slug"
       | "invalid_tmdb_id"
       | "invalid_pagination"
-      | "invalid_overlap_users",
+      | "invalid_overlap_users"
+      | "invalid_request",
     message: string
   ) {
     super(message);
     this.name = "ApiValidationError";
   }
+}
+
+export function parseManualJobRequest(value: unknown): ManualJobRequestDto {
+  if (!value || typeof value !== "object") {
+    throw new ApiValidationError("invalid_request", "A JSON job body is required");
+  }
+
+  const candidate = value as { type?: unknown; identifier?: unknown };
+  if (typeof candidate.type !== "string" || !isJobType(candidate.type)) {
+    throw new ApiValidationError("invalid_request", "Invalid job type");
+  }
+  if (typeof candidate.identifier !== "string") {
+    throw new ApiValidationError("invalid_request", "Invalid job identifier");
+  }
+
+  const type = candidate.type;
+  if (type !== "movie") {
+    return { type, identifier: normalizeUsername(candidate.identifier) };
+  }
+
+  const identifier = candidate.identifier.trim().toLowerCase();
+  if (identifier.startsWith("tmdb_")) {
+    try {
+      const parsed = parseMovieJobIdentifier(identifier);
+      if (parsed.kind !== "tmdb") throw new TypeError("Invalid TMDB identifier");
+      return {
+        type,
+        identifier: buildTmdbMovieJobIdentifier(parsed.tmdbId),
+      };
+    } catch {
+      throw new ApiValidationError("invalid_request", "Invalid movie job identifier");
+    }
+  }
+  return { type, identifier: normalizeMovieSlug(identifier) };
 }
 
 export function normalizeUsername(value: string): string {
