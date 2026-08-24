@@ -19,6 +19,7 @@ export const API_ERROR_CODES = {
   INVALID_TMDB_ID: "invalid_tmdb_id",
   INVALID_PAGINATION: "invalid_pagination",
   INVALID_OVERLAP_USERS: "invalid_overlap_users",
+  UNAUTHORIZED: "unauthorized",
   RESOURCE_NOT_FOUND: "resource_not_found",
   JOB_NOT_FOUND: "job_not_found",
   RATE_LIMITED: "rate_limited",
@@ -78,6 +79,11 @@ export interface ApiJobResponse {
   data: ApiJobSummary;
 }
 
+export interface ManualJobRequestDto {
+  type: JobType;
+  identifier: string;
+}
+
 export type JobApiResponse = ApiJobResponse | ApiErrorResponse;
 export type ApiResourceResponse<T> =
   | ApiDataResponse<T>
@@ -116,6 +122,10 @@ export interface ListItemDto {
   movie: MovieDto;
 }
 
+export interface WatchedListItemDto extends ListItemDto {
+  userRating: number | null;
+}
+
 export interface WatchlistDto {
   user: ProfileSummaryDto;
   items: ListItemDto[];
@@ -125,7 +135,7 @@ export interface WatchlistDto {
 
 export interface WatchedDto {
   user: ProfileSummaryDto;
-  items: ListItemDto[];
+  items: WatchedListItemDto[];
   filmCount: number;
   pagination: PaginationMeta;
 }

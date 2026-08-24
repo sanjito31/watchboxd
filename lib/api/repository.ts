@@ -10,6 +10,7 @@ import type {
   NetworkRecord,
   UserListRecord,
   UserRecord,
+  WatchedListItemRecord,
 } from "@/lib/api/types";
 
 const movieInclude = { movie: true } as const;
@@ -33,7 +34,9 @@ export class PrismaApiRepository implements ApiRepository {
       : null;
   }
 
-  async getWatched(username: string): Promise<UserListRecord | null> {
+  async getWatched(
+    username: string
+  ): Promise<UserListRecord<WatchedListItemRecord> | null> {
     const user = await prisma.letterboxdUser.findUnique({
       where: { username },
       include: {
@@ -41,7 +44,10 @@ export class PrismaApiRepository implements ApiRepository {
       },
     });
     return user
-      ? { user: mapUser(user), items: user.watchedItems.map(mapListItem) }
+      ? {
+          user: mapUser(user),
+          items: user.watchedItems.map(mapWatchedListItem),
+        }
       : null;
   }
 
@@ -143,6 +149,18 @@ function mapListItem(item: {
   movie: Parameters<typeof mapMovie>[0];
 }): ListItemRecord {
   return { position: item.position, movie: mapMovie(item.movie) };
+}
+
+function mapWatchedListItem(item: {
+  position: number;
+  userRating: number | null;
+  movie: Parameters<typeof mapMovie>[0];
+}): WatchedListItemRecord {
+  return {
+    position: item.position,
+    userRating: item.userRating,
+    movie: mapMovie(item.movie),
+  };
 }
 
 function mapMovie(movie: {

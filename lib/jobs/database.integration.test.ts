@@ -56,6 +56,7 @@ describe.skipIf(!databaseUrl)("Letterboxd cache database integration", () => {
       sourceTitle: "Integration Film",
       sourceSlug: slug,
       sourceYear: 2026,
+      userRating: null,
       letterboxdFilmId: null,
       letterboxdPosterUrls: [],
     };

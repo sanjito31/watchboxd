@@ -8,6 +8,7 @@ import type {
   StoredJobRecord,
   UserListRecord,
   UserRecord,
+  WatchedListItemRecord,
 } from "./types";
 
 const now = new Date("2026-08-20T12:00:00.000Z");
@@ -173,6 +174,39 @@ describe("ApiService Letterboxd movie cache", () => {
       letterboxdRating: 4.2,
     });
   });
+
+  it("returns the user's Letterboxd rating on watched items", async () => {
+    const repository = fakeRepository();
+    repository.getWatched = vi.fn().mockResolvedValue(
+      watchedList([movie("rated", "resolved")], [4.5])
+    );
+
+    const response = await new ApiService(
+      repository,
+      fakeJobs(),
+      () => now
+    ).getWatched("alice", 1, 10);
+
+    expect("data" in response && response.data?.items).toEqual([
+      expect.objectContaining({ position: 0, userRating: 4.5 }),
+    ]);
+  });
+
+  it("queues an explicit watched refresh without consulting cache freshness", async () => {
+    const repository = fakeRepository();
+    const jobs = fakeJobs();
+    const response = await new ApiService(repository, jobs, () => now).requestJob(
+      "watched",
+      "alice"
+    );
+
+    expect(response).toMatchObject({
+      data: null,
+      meta: { jobs: [{ resourceKey: "watched:alice" }] },
+    });
+    expect(jobs.ensureJob).toHaveBeenCalledWith("watched", "alice");
+    expect(repository.getWatched).not.toHaveBeenCalled();
+  });
 });
 
 function user(stamp = fresh): UserRecord {
@@ -212,6 +246,21 @@ function list(movies: MovieRecord[], stamp = fresh): UserListRecord {
   return {
     user: user(stamp),
     items: movies.map((entry, position) => ({ position, movie: entry })),
+  };
+}
+
+function watchedList(
+  movies: MovieRecord[],
+  ratings: Array<number | null>,
+  stamp = fresh
+): UserListRecord<WatchedListItemRecord> {
+  return {
+    user: user(stamp),
+    items: movies.map((entry, position) => ({
+      position,
+      movie: entry,
+      userRating: ratings[position] ?? null,
+    })),
   };
 }
 

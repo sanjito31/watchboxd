@@ -14,6 +14,7 @@ import type {
   ProfileDto,
   ProfileSummaryDto,
   WatchedDto,
+  WatchedListItemDto,
   WatchlistDto,
 } from "@/lib/api/contracts";
 import { classifyFreshness } from "@/lib/cache/policy";
@@ -23,10 +24,12 @@ import type {
   ApiRepository,
   CacheStamp,
   JobGateway,
+  ListItemRecord,
   MovieRecord,
   StoredJobRecord,
   UserListRecord,
   UserRecord,
+  WatchedListItemRecord,
 } from "@/lib/api/types";
 
 type ResourceResult<T> =
@@ -68,7 +71,14 @@ export class ApiService {
     if (!list || classifyFreshness(list.user.watchlist, this.now()) === "missing") {
       return this.missOrNotFound("watchlist", username);
     }
-    return this.listResponse(list, "watchlist", username, page, pageSize);
+    return this.listResponse(
+      list,
+      "watchlist",
+      username,
+      page,
+      pageSize,
+      toListItem
+    );
   }
 
   async getWatched(
@@ -80,7 +90,14 @@ export class ApiService {
     if (!list || classifyFreshness(list.user.watched, this.now()) === "missing") {
       return this.missOrNotFound("watched", username);
     }
-    return this.listResponse(list, "watched", username, page, pageSize);
+    return this.listResponse(
+      list,
+      "watched",
+      username,
+      page,
+      pageSize,
+      toWatchedListItem
+    );
   }
 
   async getNetwork(username: string): Promise<ResourceResult<NetworkDto>> {
@@ -181,13 +198,32 @@ export class ApiService {
       : { error: { code: "job_not_found", message: "Job not found" } };
   }
 
-  private async listResponse(
-    list: UserListRecord,
+  async requestJob(
+    type: JobType,
+    identifier: string
+  ): Promise<ApiAcceptedResponse | ApiErrorResponse> {
+    const job = await this.jobs.ensureJob(type, identifier);
+    return job.status === "failed" ? failedJobResponse(job) : accepted([job]);
+  }
+
+  private async listResponse<
+    TRecord extends ListItemRecord,
+    TDto extends ListItemDto,
+  >(
+    list: UserListRecord<TRecord>,
     kind: "watchlist" | "watched",
     username: string,
     page: number,
-    pageSize: number
-  ): Promise<ResourceResult<WatchlistDto | WatchedDto>> {
+    pageSize: number,
+    mapItem: (item: TRecord) => TDto
+  ): Promise<
+    ResourceResult<{
+      user: ProfileSummaryDto;
+      items: TDto[];
+      filmCount: number;
+      pagination: PaginationMeta;
+    }>
+  > {
     const pagination = paginate(list.items, page, pageSize);
     const pageMovies = pagination.items.map((item) => item.movie);
 
@@ -195,7 +231,7 @@ export class ApiService {
       kind === "watchlist" ? list.user.watchlist : list.user.watched;
     const data = {
       user: toProfileSummary(list.user),
-      items: pagination.items.map(toListItem),
+      items: pagination.items.map(mapItem),
       filmCount: list.items.length,
       pagination: pagination.meta,
     };
@@ -390,6 +426,12 @@ function toProfileSummary(user: UserRecord): ProfileSummaryDto {
 
 function toListItem(item: { position: number; movie: MovieRecord }): ListItemDto {
   return { position: item.position, movie: toMovieDto(item.movie) };
+}
+
+function toWatchedListItem(
+  item: WatchedListItemRecord
+): WatchedListItemDto {
+  return { ...toListItem(item), userRating: item.userRating };
 }
 
 function toMovieDto(movie: MovieRecord): MovieDto {

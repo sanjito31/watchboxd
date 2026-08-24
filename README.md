@@ -133,12 +133,13 @@ locally.
 |-------|---------|
 | `GET /api/v1/users/{username}` | Cached profile or profile job |
 | `GET /api/v1/users/{username}/watchlist` | Paginated watchlist |
-| `GET /api/v1/users/{username}/watched` | Paginated deduplicated watched titles |
+| `GET /api/v1/users/{username}/watched` | Paginated deduplicated watched titles, including nullable `userRating` |
 | `GET /api/v1/users/{username}/network` | Mutual and following network |
 | `GET /api/v1/movies/{tmdbId}` | Follow Letterboxd's `/tmdb/{id}/` redirect and return Letterboxd movie data |
 | `GET /api/v1/movies/letterboxd/{letterboxdSlug}` | Movie lookup by Letterboxd slug or known alias |
 | `GET /api/v1/overlap?users=a,b` | Server-computed paginated overlap |
 | `GET /api/v1/jobs/{jobId}` | Pollable background-job status |
+| `POST /api/v1/jobs` | Authenticated manual scrape trigger that bypasses cache freshness |
 
 Fresh responses return `200`; cache misses return `202` with `Location` and
 `Retry-After`; stale data returns immediately with deduplicated `refreshJobs`.
@@ -150,11 +151,26 @@ two lists; overlap continues to require resolved page movies and omits failed
 ones. List responses do not create or inspect per-movie jobs; individual movie
 routes handle movie freshness and recovery.
 
+To force a watched-list refresh before its cache becomes stale, configure the
+server-only `MANUAL_JOB_API_KEY` environment variable and submit a job:
+
+```bash
+curl --request POST "https://your-app.vercel.app/api/v1/jobs" \
+  --header "Authorization: Bearer your-manual-job-api-key" \
+  --header "Content-Type: application/json" \
+  --data '{"type":"watched","identifier":"letterboxd-username"}'
+```
+
+The endpoint returns `202 Accepted` with the same pollable job descriptor used
+for cache misses. It bypasses freshness checks but still deduplicates an
+already queued or running job for the same resource.
+
 ## Deployment checklist
 
 1. Rotate any previously exposed Supabase database password before rollout.
 2. Configure `DATABASE_URL`, `DIRECT_URL`, `DATABASE_POOL_MAX`, and
-   `API_ALLOWED_ORIGINS` separately for Preview and Production.
+   `API_ALLOWED_ORIGINS`, and a long random `MANUAL_JOB_API_KEY` separately for
+   Preview and Production.
 3. Stop old application instances and queue deliveries, then run
    `npm run db:deploy`. Expansion and contraction are recorded migrations and
    apply in order. Never run `db push` for this schema.

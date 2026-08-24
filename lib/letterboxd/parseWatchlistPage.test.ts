@@ -2,7 +2,11 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseUsername } from "./parseUsername";
-import { parseWatchlistHtml } from "./parseWatchlistPage";
+import {
+  parseFilmGridHtml,
+  parseUserRating,
+  parseWatchlistHtml,
+} from "./parseWatchlistPage";
 
 const fixture = readFileSync(
   join(__dirname, "__fixtures__", "watchlist-page.html"),
@@ -35,6 +39,7 @@ describe("parseWatchlistHtml", () => {
       sourceTitle: "Interstellar",
       sourceSlug: "interstellar",
       sourceYear: 2014,
+      userRating: null,
       letterboxdFilmId: 157336,
       slug: "interstellar",
       title: "Interstellar",
@@ -54,5 +59,36 @@ describe("parseWatchlistHtml", () => {
       ],
     });
     expect(films.find((f) => f.slug === "the-bear")).toBeUndefined();
+  });
+
+  it("extracts and normalizes each film's viewing-data rating", () => {
+    const films = parseFilmGridHtml(`
+      <ul>
+        <article class="grid-item">
+          <div data-item-link="/film/full/" data-item-name="Full (2024)"></div>
+          <p class="poster-viewingdata"><span>★★★★</span></p>
+        </article>
+        <li class="poster-container">
+          <div data-item-link="/film/half/" data-item-name="Half (2025)"></div>
+          <p class="poster-viewingdata"><span>★★★&frac12;</span></p>
+        </li>
+        <li class="poster-container">
+          <div data-item-link="/film/unrated/" data-item-name="Unrated (2026)"></div>
+          <p class="poster-viewingdata"></p>
+        </li>
+      </ul>
+    `);
+
+    expect(films.map(({ sourceSlug, userRating }) => [sourceSlug, userRating])).toEqual([
+      ["full", 4],
+      ["half", 3.5],
+      ["unrated", null],
+    ]);
+  });
+
+  it("accepts Letterboxd half-rating text in either fraction form", () => {
+    expect(parseUserRating("★★ 1/2")).toBe(2.5);
+    expect(parseUserRating("★★★★½")).toBe(4.5);
+    expect(parseUserRating("")).toBeNull();
   });
 });

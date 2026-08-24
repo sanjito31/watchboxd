@@ -50,12 +50,25 @@ export function parseFilmGridHtml(html: string): LetterboxdFilmGridItem[] {
     const allPosterUrls = [
       ...new Set(legacyImage ? [legacyImage, ...posterUrls] : posterUrls),
     ];
+    let userRating: number | null = null;
+    let gridItem = node.parent();
+    while (gridItem.length > 0) {
+      if (gridItem.find(SELECTORS.poster).length > 1) break;
+
+      const viewingData = gridItem.find(SELECTORS.viewingData).first();
+      if (viewingData.length > 0) {
+        userRating = parseUserRating(viewingData.text());
+        break;
+      }
+      gridItem = gridItem.parent();
+    }
 
     films.push({
       position: films.length,
       sourceTitle: title,
       sourceSlug: slug,
       sourceYear: year ?? null,
+      userRating,
       letterboxdFilmId,
       letterboxdPosterUrls: allPosterUrls,
       slug,
@@ -70,8 +83,25 @@ export function parseFilmGridHtml(html: string): LetterboxdFilmGridItem[] {
   return films;
 }
 
+export function hasNextFilmGridPage(html: string): boolean {
+  const $ = cheerio.load(html);
+  return $(".pagination a.next, .pagination a[rel='next']").length > 0;
+}
+
 /** Backward-compatible name used by the current watchlist route. */
 export const parseWatchlistHtml = parseFilmGridHtml;
+
+export function parseUserRating(rawRating: string | undefined): number | null {
+  if (!rawRating) return null;
+
+  const normalized = rawRating.replace(/\s+/g, "");
+  const fullStars = [...normalized].filter((character) => character === "★").length;
+  const hasHalfStar = normalized.includes("½") || normalized.includes("1/2");
+  if (fullStars === 0 && !hasHalfStar) return null;
+
+  const rating = fullStars + (hasHalfStar ? 0.5 : 0);
+  return rating >= 0.5 && rating <= 5 ? rating : null;
+}
 
 export function extractFilmSlug(link: string): string | null {
   const match = link.match(/\/film\/([^/]+)\//);

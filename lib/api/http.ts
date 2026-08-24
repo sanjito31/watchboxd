@@ -76,11 +76,14 @@ export function handleRouteError(request: Request, error: unknown): Response {
   );
 }
 
-export function optionsResponse(request: Request): Response {
+export function optionsResponse(
+  request: Request,
+  methods = "GET, OPTIONS"
+): Response {
   const headers = new Headers({
-    Allow: "GET, OPTIONS",
-    "Access-Control-Allow-Methods": "GET, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    Allow: methods,
+    "Access-Control-Allow-Methods": methods,
+    "Access-Control-Allow-Headers": "Authorization, Content-Type",
     "Access-Control-Max-Age": "86400",
   });
   applyCorsHeaders(request, headers);

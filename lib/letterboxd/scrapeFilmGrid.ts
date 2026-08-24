@@ -3,8 +3,11 @@ import {
   MAX_PAGES,
   PAGE_DELAY_MS,
 } from "./constants";
-import { fetchHtml, LetterboxdNotFoundError } from "./fetchHtml";
-import { parseFilmGridHtml } from "./parseFilmGridPage";
+import { fetchHtml } from "./fetchHtml";
+import {
+  hasNextFilmGridPage,
+  parseFilmGridHtml,
+} from "./parseFilmGridPage";
 import type { FilmGridKind, LetterboxdFilmGridItem } from "./types";
 
 export interface FilmGridScrapeOptions {
@@ -24,9 +27,9 @@ export function buildFilmGridPageUrl(
 }
 
 /**
- * Scrapes either of Letterboxd's film grids with the existing 50-page limit,
- * 280 ms inter-page delay, first-page 404 behavior, and later-page stop
- * behavior.
+ * Scrapes either of Letterboxd's film grids with a bounded safety limit,
+ * 280 ms inter-page delay, and fail-closed pagination so an incomplete scrape
+ * cannot replace a previously complete snapshot.
  */
 export async function scrapeFilmGrid(
   username: string,
@@ -42,16 +45,13 @@ export async function scrapeFilmGrid(
   const seen = new Set<string>();
 
   for (let page = 1; page <= maxPages; page++) {
-    let html: string;
-    try {
-      html = await fetchPage(buildFilmGridPageUrl(normalized, kind, page));
-    } catch (error) {
-      if (page === 1 && error instanceof LetterboxdNotFoundError) throw error;
-      break;
-    }
+    const html = await fetchPage(buildFilmGridPageUrl(normalized, kind, page));
 
     const pageItems = parseFilmGridHtml(html);
-    if (pageItems.length === 0) break;
+    if (pageItems.length === 0) {
+      if (page === 1 && !hasNextFilmGridPage(html)) break;
+      throw new Error(`Film grid page ${page} contained no films`);
+    }
 
     for (const item of pageItems) {
       const identity =
@@ -61,7 +61,11 @@ export async function scrapeFilmGrid(
       items.push({ ...item, position: items.length });
     }
 
-    if (page < maxPages) await wait(pageDelayMs);
+    if (!hasNextFilmGridPage(html)) break;
+    if (page === maxPages) {
+      throw new Error(`Film grid exceeded the ${maxPages}-page safety limit`);
+    }
+    await wait(pageDelayMs);
   }
 
   return items;
