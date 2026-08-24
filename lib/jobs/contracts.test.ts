@@ -14,6 +14,9 @@ describe("canonical job resource keys", () => {
     expect(buildCanonicalResourceKey("movie", "Some-Film_2")).toBe(
       "movie:some-film_2"
     );
+    expect(buildCanonicalResourceKey("movie_metadata", "TMDB_157336")).toBe(
+      "movie_metadata:tmdb_157336"
+    );
   });
 
   it("rejects URLs and mismatched or malformed keys", () => {

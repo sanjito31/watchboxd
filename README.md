@@ -165,12 +165,50 @@ The endpoint returns `202 Accepted` with the same pollable job descriptor used
 for cache misses. It bypasses freshness checks but still deduplicates an
 already queued or running job for the same resource.
 
+The local pending-movie bulk trigger calls this deployed endpoint rather than
+publishing to Vercel Queue directly. Set `WATCHBOXD_API_BASE_URL` to the
+deployment whose `MANUAL_JOB_API_KEY` matches your local value, then run:
+
+```bash
+npm run jobs:backfill-movies -- --dry-run
+npm run jobs:backfill-movies
+```
+
+This command needs no local OIDC token; the deployment publishes each accepted
+movie job using its own Vercel identity.
+
+TMDB enrichment uses the server-only `TMDB_API_READ_TOKEN`. To enqueue one
+known TMDB movie manually, use the same endpoint with the canonical TMDB job
+identifier:
+
+```bash
+curl --request POST "https://your-app.vercel.app/api/v1/jobs" \
+  --header "Authorization: Bearer your-manual-job-api-key" \
+  --header "Content-Type: application/json" \
+  --data '{"type":"movie_metadata","identifier":"tmdb_157336"}'
+```
+
+After deploying the metadata migration, preview the local bulk backfill for
+movies whose TMDB metadata is missing or stale, then run it:
+
+```bash
+npm run tmdb:backfill -- --dry-run
+npm run tmdb:backfill
+```
+
+Pass `--all` to force every movie with a TMDB ID, or use `--limit`,
+`--batch-size`, and `--concurrency` to bound a run. This command calls TMDB and
+upserts Postgres directly, so it needs `DATABASE_URL` and
+`TMDB_API_READ_TOKEN` but does not need Vercel Queue or OIDC credentials. Newly
+resolved Letterboxd movie jobs continue to create queued TMDB metadata child
+jobs, while fresh metadata is left alone.
+
 ## Deployment checklist
 
 1. Rotate any previously exposed Supabase database password before rollout.
-2. Configure `DATABASE_URL`, `DIRECT_URL`, `DATABASE_POOL_MAX`, and
-   `API_ALLOWED_ORIGINS`, and a long random `MANUAL_JOB_API_KEY` separately for
-   Preview and Production.
+2. Configure `DATABASE_URL`, `DIRECT_URL`, `DATABASE_POOL_MAX`,
+   `API_ALLOWED_ORIGINS`, `TMDB_API_READ_TOKEN`, and a long random
+   `MANUAL_JOB_API_KEY` separately for Preview and Production.
 3. Stop old application instances and queue deliveries, then run
    `npm run db:deploy`. Expansion and contraction are recorded migrations and
    apply in order. Never run `db push` for this schema.
@@ -200,6 +238,20 @@ The default checks the user profile and polls any `202` job until it finishes.
 Pass `network`, `watchlist`, `watched`, `all`, or a comma-separated selection as
 the final argument. Watchlist and watched checks print only the first five
 items.
+
+## Import saved watched pages
+
+Place complete Letterboxd watched pages at
+`data/{username}/watched-1.html`, `watched-2.html`, and so on. Preview the
+parse without touching the database:
+
+```bash
+npm run watched:import -- letterboxd-username --dry-run
+```
+
+Remove `--dry-run` to atomically replace that user's watched snapshot and
+persist the parsed user ratings. The importer does not publish movie enrichment
+jobs; run `npm run jobs:backfill-movies` separately if those are needed.
 
 ## Stack
 

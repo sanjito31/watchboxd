@@ -253,12 +253,25 @@ export class ApiService {
     if (!movie || movie.resolutionStatus !== "resolved") {
       return this.missOrNotFound("movie", identifier);
     }
-    return this.cachedResource(
-      toMovieDto(movie),
-      movie.letterboxd,
-      "movie",
-      movie.letterboxdSlug
-    );
+    const refreshJobs = await this.refreshStaleResources([
+      {
+        stamp: movie.letterboxd,
+        type: "movie",
+        identifier: movie.letterboxdSlug,
+      },
+    ]);
+    if (
+      movie.tmdbId !== null &&
+      classifyFreshness(movie.metadata, this.now()) !== "fresh"
+    ) {
+      refreshJobs.push(
+        await this.jobs.ensureJob(
+          "movie_metadata",
+          buildTmdbMovieJobIdentifier(movie.tmdbId)
+        )
+      );
+    }
+    return cached(toMovieDto(movie), movie.letterboxd, refreshJobs);
   }
 
   private async pendingMovies(

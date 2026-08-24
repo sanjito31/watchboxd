@@ -46,6 +46,22 @@ export function parseManualJobRequest(value: unknown): ManualJobRequestDto {
   }
 
   const type = candidate.type;
+  if (type === "movie_metadata") {
+    const identifier = candidate.identifier.trim().toLowerCase();
+    try {
+      const parsed = parseMovieJobIdentifier(identifier);
+      if (parsed.kind !== "tmdb") throw new TypeError("Invalid TMDB identifier");
+      return {
+        type,
+        identifier: buildTmdbMovieJobIdentifier(parsed.tmdbId),
+      };
+    } catch {
+      throw new ApiValidationError(
+        "invalid_request",
+        "Movie metadata jobs require a tmdb_<id> identifier"
+      );
+    }
+  }
   if (type !== "movie") {
     return { type, identifier: normalizeUsername(candidate.identifier) };
   }

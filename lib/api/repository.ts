@@ -13,7 +13,7 @@ import type {
   WatchedListItemRecord,
 } from "@/lib/api/types";
 
-const movieInclude = { movie: true } as const;
+const movieInclude = { movie: { include: { metadata: true } } } as const;
 const LETTERBOXD_NETWORK_PAGE_SIZE = 25;
 
 export class PrismaApiRepository implements ApiRepository {
@@ -87,7 +87,10 @@ export class PrismaApiRepository implements ApiRepository {
   }
 
   async getMovieByTmdbId(tmdbId: number): Promise<MovieRecord | null> {
-    const movie = await prisma.movie.findUnique({ where: { tmdbId } });
+    const movie = await prisma.movie.findUnique({
+      where: { tmdbId },
+      include: { metadata: true },
+    });
     return movie ? mapMovie(movie) : null;
   }
 
@@ -99,6 +102,7 @@ export class PrismaApiRepository implements ApiRepository {
           { aliases: { some: { slug } } },
         ],
       },
+      include: { metadata: true },
     });
     return movie ? mapMovie(movie) : null;
   }
@@ -174,6 +178,10 @@ function mapMovie(movie: {
   letterboxdRating: number | null;
   letterboxdFetchedAt: Date | null;
   letterboxdStaleAt: Date | null;
+  metadata: {
+    tmdbFetchedAt: Date;
+    tmdbStaleAt: Date;
+  } | null;
 }): MovieRecord {
   return {
     letterboxdSlug: movie.letterboxdSlug,
@@ -187,6 +195,10 @@ function mapMovie(movie: {
     letterboxd: {
       fetchedAt: movie.letterboxdFetchedAt,
       staleAt: movie.letterboxdStaleAt,
+    },
+    metadata: {
+      fetchedAt: movie.metadata?.tmdbFetchedAt ?? null,
+      staleAt: movie.metadata?.tmdbStaleAt ?? null,
     },
   };
 }

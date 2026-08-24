@@ -152,6 +152,38 @@ describe("v1 route handlers", () => {
     expect(serviceMocks.requestJob).toHaveBeenCalledWith("watched", "alice");
   });
 
+  it("queues a manual TMDB metadata enrichment job", async () => {
+    const metadataJob = {
+      ...job,
+      type: "movie_metadata" as const,
+      resourceKey: "movie_metadata:tmdb_157336" as const,
+    };
+    serviceMocks.requestJob.mockResolvedValue({
+      data: null,
+      meta: { cache: "miss", jobs: [metadataJob] },
+    });
+
+    const response = await postJob(
+      request("https://api.example/api/v1/jobs", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer test-manual-job-secret",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          type: "movie_metadata",
+          identifier: "TMDB_157336",
+        }),
+      })
+    );
+
+    expect(response.status).toBe(202);
+    expect(serviceMocks.requestJob).toHaveBeenCalledWith(
+      "movie_metadata",
+      "tmdb_157336"
+    );
+  });
+
   it("rejects invalid manual-job JSON before queue access", async () => {
     const response = await postJob(
       request("https://api.example/api/v1/jobs", {

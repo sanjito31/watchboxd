@@ -16,6 +16,7 @@ export const JOB_TYPES = [
   "watched",
   "network",
   "movie",
+  "movie_metadata",
 ] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 

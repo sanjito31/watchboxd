@@ -6,6 +6,9 @@ TRUNCATE TABLE
   "WatchlistItem",
   "WatchedItem",
   "MovieAlias",
+  "MovieGenre",
+  "MovieMetadata",
+  "Genre",
   "Movie",
   "LetterboxdUser"
 RESTART IDENTITY CASCADE;

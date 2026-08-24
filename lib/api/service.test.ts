@@ -86,6 +86,7 @@ describe("ApiService Letterboxd movie cache", () => {
         tmdbId: null,
         letterboxdRating: null,
         letterboxd: { fetchedAt: null, staleAt: null },
+        metadata: { fetchedAt: null, staleAt: null },
       } satisfies MovieRecord;
       const snapshot = list([
         movie("ready", "resolved"),
@@ -175,6 +176,29 @@ describe("ApiService Letterboxd movie cache", () => {
     });
   });
 
+  it("queues missing TMDB metadata for an already resolved movie", async () => {
+    const repository = fakeRepository();
+    repository.getMovieByTmdbId = vi.fn().mockResolvedValue({
+      ...movie("interstellar", "resolved"),
+      tmdbId: 157336,
+      metadata: { fetchedAt: null, staleAt: null },
+    });
+    const jobs = fakeJobs();
+
+    const response = await new ApiService(repository, jobs, () => now).getMovie(
+      157336
+    );
+
+    expect("meta" in response && response.meta).toMatchObject({
+      cache: "stale",
+      refreshJobs: [{ resourceKey: "movie_metadata:tmdb_157336" }],
+    });
+    expect(jobs.ensureJob).toHaveBeenCalledWith(
+      "movie_metadata",
+      "tmdb_157336"
+    );
+  });
+
   it("returns the user's Letterboxd rating on watched items", async () => {
     const repository = fakeRepository();
     repository.getWatched = vi.fn().mockResolvedValue(
@@ -239,6 +263,7 @@ function movie(
     letterboxdPoster: `https://a.ltrbxd.com/${slug}.jpg`,
     letterboxdRating: 4.2,
     letterboxd: stamp,
+    metadata: fresh,
   };
 }
 

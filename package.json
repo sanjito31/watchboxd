@@ -20,7 +20,9 @@
     "db:test": "tsx scripts/test-database.ts",
     "db:rehearse": "tsx scripts/rehearse-migrations.ts",
     "api:smoke": "node scripts/smoke-deployed-api.mjs",
-    "jobs:backfill-movies": "tsx scripts/backfill-pending-movies.ts"
+    "watched:import": "node --import tsx scripts/import-watched-html.ts",
+    "jobs:backfill-movies": "node --import tsx scripts/backfill-pending-movies.ts",
+    "tmdb:backfill": "node --import tsx scripts/backfill-movie-metadata.ts"
   },
   "dependencies": {
     "@next/env": "16.3.1",

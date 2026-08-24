@@ -2,7 +2,10 @@ export type RetryableProviderErrorKind =
   | "rate_limited"
   | "timeout"
   | "upstream_unavailable";
-export type PermanentProviderErrorKind = "not_found" | "configuration";
+export type PermanentProviderErrorKind =
+  | "not_found"
+  | "configuration"
+  | "parse_error";
 export type ProviderErrorKind =
   | RetryableProviderErrorKind
   | PermanentProviderErrorKind;

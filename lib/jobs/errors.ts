@@ -32,7 +32,10 @@ export function classifyJobError(error: unknown): ClassifiedJobError {
     const code = providerCode(error.kind);
     return {
       failure: sanitizeJobFailure(code, error.message),
-      retryable: error.kind !== "not_found" && error.kind !== "configuration",
+      retryable:
+        error.kind !== "not_found" &&
+        error.kind !== "configuration" &&
+        error.kind !== "parse_error",
       retryAfterSeconds: error.retryAfterSeconds,
     };
   }
@@ -141,6 +144,8 @@ function providerCode(kind: ProviderError["kind"]): JobFailureCode {
       return "rate_limited";
     case "timeout":
       return "timeout";
+    case "parse_error":
+      return "parse_error";
     case "upstream_unavailable":
     case "configuration":
       return "upstream_unavailable";

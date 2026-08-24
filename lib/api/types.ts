@@ -35,6 +35,7 @@ export interface MovieRecord {
   letterboxdPoster: string | null;
   letterboxdRating: number | null;
   letterboxd: CacheStamp;
+  metadata: CacheStamp;
 }
 
 export interface ListItemRecord {

@@ -42,11 +42,12 @@ enum JobEnvironment {
 }
 
 enum ScrapeJobType {
-  PROFILE   @map("profile")
-  WATCHLIST @map("watchlist")
-  WATCHED   @map("watched")
-  NETWORK   @map("network")
-  MOVIE     @map("movie")
+  PROFILE        @map("profile")
+  WATCHLIST      @map("watchlist")
+  WATCHED        @map("watched")
+  NETWORK        @map("network")
+  MOVIE          @map("movie")
+  MOVIE_METADATA @map("movie_metadata")
 }
 
 enum ScrapeJobStatus {
@@ -97,7 +98,7 @@ model Movie {
   letterboxdFilmId Int?                  @unique(map: "Movie_letterboxdFilmId_key")
   tmdbId           Int?                  @unique(map: "Movie_tmdbId_key")
   resolutionStatus MovieResolutionStatus @default(PENDING)
-  
+
   title            String
   year             Int?
   letterboxdPoster String?
@@ -109,7 +110,7 @@ model Movie {
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
-  // metadata       MovieMetadata?
+  metadata       MovieMetadata?
 
   watchlistItems WatchlistItem[]
   watchedItems   WatchedItem[]
@@ -118,43 +119,45 @@ model Movie {
   @@index([resolutionStatus], map: "Movie_resolutionStatus_idx")
 }
 
-// model MovieMetadata {
-//   movieId             BigInt      @id
+model MovieMetadata {
+  movieId             BigInt      @id
 
-//   runtimeMinutes      Int?
-//   overview            String?
-//   tmdbTitle           String?
-//   originalTitle       String?
-//   originalLanguage    String?
-//   tmdbReleaseDate     DateTime?   @db.Date
-//   tmdbVoteAverage     Float?
-//   tmdbPosterPath      String?
-//   tmdbBackdropPath    String?
+  runtimeMinutes      Int?
+  overview            String?
+  tmdbTitle           String?
+  originalTitle       String?
+  originalLanguage    String?
+  tmdbReleaseDate     DateTime?   @db.Date
+  tmdbVoteAverage     Float?
+  tmdbPosterPath      String?
+  tmdbBackdropPath    String?
 
-//   tmdbFetchedAt       DateTime    @db.Timestamptz(3)
-//   tmdbStaleAt         DateTime    @db.Timestamptz(3)
+  tmdbFetchedAt       DateTime    @db.Timestamptz(3)
+  tmdbStaleAt         DateTime    @db.Timestamptz(3)
 
-//   movie  Movie        @relation(fields: [movieId], references: [id], onDelete: Cascade)
-//   genres MovieGenre[]
-// }
+  movie  Movie        @relation(fields: [movieId], references: [id], onDelete: Cascade)
+  genres MovieGenre[]
 
-// model Genre {
-//   id     Int    @id // TMDB genre ID
-//   name   String
+  @@index([tmdbStaleAt], map: "MovieMetadata_tmdbStaleAt_idx")
+}
 
-//   movies MovieGenre[]
-// }
+model Genre {
+  id     Int    @id // TMDB genre ID
+  name   String
 
-// model MovieGenre {
-//   movieId BigInt
-//   genreId Int
+  movies MovieGenre[]
+}
 
-//   movie    MovieMetadata @relation(fields: [movieId], references: [movieId], onDelete: Cascade)
-//   genre    Genre         @relation(fields: [genreId], references: [id], onDelete: Cascade)
+model MovieGenre {
+  movieId BigInt
+  genreId Int
 
-//   @@id([movieId, genreId])
-//   @@index([genreId])
-// }
+  movie    MovieMetadata @relation(fields: [movieId], references: [movieId], onDelete: Cascade)
+  genre    Genre         @relation(fields: [genreId], references: [id], onDelete: Cascade)
+
+  @@id([movieId, genreId])
+  @@index([genreId], map: "MovieGenre_genreId_idx")
+}
 
 model MovieAlias {
   slug    String @id

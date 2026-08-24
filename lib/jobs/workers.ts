@@ -16,7 +16,14 @@ import {
   type ProfileInfo,
 } from "@/lib/letterboxd";
 import { LETTERBOXD_BASE } from "@/lib/letterboxd/constants";
-import { parseMovieJobIdentifier } from "@/lib/movies/jobIdentifier";
+import {
+  buildTmdbMovieJobIdentifier,
+  parseMovieJobIdentifier,
+} from "@/lib/movies/jobIdentifier";
+import {
+  fetchTmdbMovieMetadata,
+  type TmdbMovieMetadataSnapshot,
+} from "@/lib/tmdb";
 import {
   buildCanonicalResourceKey,
   parseCanonicalResourceKey,
@@ -51,6 +58,7 @@ export interface JobWorkerRegistry {
   watched: SnapshotJobWorker<LetterboxdFilmGridResult>;
   network: SnapshotJobWorker<NetworkScrapeResult>;
   movie: SnapshotJobWorker<MovieScrapeResult>;
+  movie_metadata: SnapshotJobWorker<TmdbMovieMetadataSnapshot>;
 }
 
 export interface PreparedJobSnapshot {
@@ -96,7 +104,21 @@ export function createDefaultWorkerRegistry(): JobWorkerRegistry {
     },
     network: { fetch: scrapeMemberNetwork, persist: persistNetworkSnapshot },
     movie: { fetch: fetchMovieSnapshot, persist: persistMovieSnapshot },
+    movie_metadata: {
+      fetch: fetchMovieMetadataSnapshot,
+      persist: persistMovieMetadataSnapshot,
+    },
   };
+}
+
+async function fetchMovieMetadataSnapshot(
+  identifier: string
+): Promise<TmdbMovieMetadataSnapshot> {
+  const parsed = parseMovieJobIdentifier(identifier);
+  if (parsed.kind !== "tmdb") {
+    throw new TypeError("Movie metadata jobs require a TMDB identifier");
+  }
+  return fetchTmdbMovieMetadata(parsed.tmdbId);
 }
 
 async function fetchMovieSnapshot(identifier: string): Promise<MovieScrapeResult> {
@@ -173,7 +195,7 @@ export async function persistFilmGridSnapshot(
   transaction: PersistenceTransaction,
   snapshot: LetterboxdFilmGridResult,
   kind: "watchlist" | "watched",
-  context: { environment: JobEnvironment }
+  context: { environment: JobEnvironment; createMovieJobs?: boolean }
 ): Promise<JobRecord[]> {
   if (snapshot.items.length > MAX_FILM_SNAPSHOT_ITEMS) {
     throw new PermanentJobError("Film snapshot exceeded the persistence limit", {
@@ -240,13 +262,15 @@ export async function persistFilmGridSnapshot(
     }
   }
 
-  return createPendingMovieJobs(
-    transaction,
-    materialized
-      .filter((entry) => entry.resolutionStatus === "PENDING")
-      .map((entry) => entry.letterboxdSlug),
-    context.environment
-  );
+  return context.createMovieJobs === false
+    ? []
+    : createPendingMovieJobs(
+        transaction,
+        materialized
+          .filter((entry) => entry.resolutionStatus === "PENDING")
+          .map((entry) => entry.letterboxdSlug),
+        context.environment
+      );
 }
 
 interface MaterializedMovie {
@@ -352,8 +376,30 @@ async function createPendingMovieJobs(
   slugs: string[],
   environment: JobEnvironment
 ): Promise<JobRecord[]> {
-  const resourceKeys = [...new Set(slugs)].map((slug) =>
-    buildCanonicalResourceKey("movie", slug)
+  return createChildJobs(transaction, "movie", slugs, environment);
+}
+
+async function createMovieMetadataJobs(
+  transaction: PersistenceTransaction,
+  tmdbIds: number[],
+  environment: JobEnvironment
+): Promise<JobRecord[]> {
+  return createChildJobs(
+    transaction,
+    "movie_metadata",
+    tmdbIds.map(buildTmdbMovieJobIdentifier),
+    environment
+  );
+}
+
+async function createChildJobs(
+  transaction: PersistenceTransaction,
+  type: "movie" | "movie_metadata",
+  identifiers: string[],
+  environment: JobEnvironment
+): Promise<JobRecord[]> {
+  const resourceKeys = [...new Set(identifiers)].map((identifier) =>
+    buildCanonicalResourceKey(type, identifier)
   );
   if (resourceKeys.length === 0) return [];
   const now = new Date();
@@ -361,7 +407,7 @@ async function createPendingMovieJobs(
     data: resourceKeys.map((resourceKey) => ({
       id: randomUUID(),
       environment: databaseEnum(environment),
-      type: "MOVIE" as const,
+      type: databaseEnum(type),
       resourceKey,
       updatedAt: now,
     })),
@@ -370,7 +416,7 @@ async function createPendingMovieJobs(
   const jobs = await transaction.scrapeJob.findMany({
     where: {
       environment: databaseEnum(environment),
-      type: "MOVIE",
+      type: databaseEnum(type),
       resourceKey: { in: resourceKeys },
       status: { in: ["QUEUED", "RUNNING"] },
     },
@@ -473,7 +519,8 @@ async function materializeNetworkMembers(
 
 export async function persistMovieSnapshot(
   transaction: PersistenceTransaction,
-  movie: MovieScrapeResult
+  movie: MovieScrapeResult,
+  context: { environment: JobEnvironment; fetchedAt: Date }
 ): Promise<JobRecord[]> {
   const lockKeys = [
     `slug:${movie.letterboxdSlug}`,
@@ -512,12 +559,17 @@ export async function persistMovieSnapshot(
     candidates[0];
 
   if (!target) {
-    await transaction.movie.create({
+    const created = await transaction.movie.create({
       data: {
         ...resolvedMovieData(movie),
       },
     });
-    return [];
+    return queueMovieMetadataIfNeeded(
+      transaction,
+      created.id,
+      movie.tmdbId,
+      context
+    );
   }
 
   const alternateSlugs = new Set(identitySlugs);
@@ -526,6 +578,7 @@ export async function persistMovieSnapshot(
     for (const alias of candidate.aliases) alternateSlugs.add(alias.slug);
     if (candidate.id !== target.id) {
       await mergeMovieRelationships(transaction, target.id, candidate.id);
+      await mergeMovieMetadata(transaction, target.id, candidate.id);
       await transaction.movie.delete({ where: { id: candidate.id } });
     }
   }
@@ -542,7 +595,92 @@ export async function persistMovieSnapshot(
       skipDuplicates: true,
     });
   }
+  return queueMovieMetadataIfNeeded(
+    transaction,
+    target.id,
+    movie.tmdbId,
+    context
+  );
+}
+
+export async function persistMovieMetadataSnapshot(
+  transaction: PersistenceTransaction,
+  snapshot: TmdbMovieMetadataSnapshot
+): Promise<JobRecord[]> {
+  const movie = await transaction.movie.findUnique({
+    where: { tmdbId: snapshot.tmdbId },
+    select: { id: true },
+  });
+  if (!movie) {
+    throw new PermanentJobError(
+      `No local movie has TMDB ID ${snapshot.tmdbId}`,
+      { code: "invalid_input" }
+    );
+  }
+
+  const genres = [...snapshot.genres].sort((left, right) => left.id - right.id);
+  if (genres.length > 0) {
+    const payload = JSON.stringify(genres);
+    await transaction.$executeRaw(Prisma.sql`
+      INSERT INTO "Genre" ("id", "name")
+      SELECT source.id, source.name
+      FROM jsonb_to_recordset(${payload}::jsonb) AS source(id integer, name text)
+      ORDER BY source.id
+      ON CONFLICT ("id") DO UPDATE SET "name" = EXCLUDED."name"
+    `);
+  }
+
+  await transaction.movieMetadata.upsert({
+    where: { movieId: movie.id },
+    create: { movieId: movie.id, ...movieMetadataData(snapshot) },
+    update: movieMetadataData(snapshot),
+  });
+  await transaction.movieGenre.deleteMany({ where: { movieId: movie.id } });
+  if (genres.length > 0) {
+    await transaction.movieGenre.createMany({
+      data: genres.map((genre) => ({
+        movieId: movie.id,
+        genreId: genre.id,
+      })),
+      skipDuplicates: true,
+    });
+  }
   return [];
+}
+
+function movieMetadataData(
+  snapshot: TmdbMovieMetadataSnapshot
+) {
+  return {
+    runtimeMinutes: snapshot.runtimeMinutes,
+    overview: snapshot.overview,
+    tmdbTitle: snapshot.tmdbTitle,
+    originalTitle: snapshot.originalTitle,
+    originalLanguage: snapshot.originalLanguage,
+    tmdbReleaseDate: snapshot.tmdbReleaseDate,
+    tmdbVoteAverage: snapshot.tmdbVoteAverage,
+    tmdbPosterPath: snapshot.tmdbPosterPath,
+    tmdbBackdropPath: snapshot.tmdbBackdropPath,
+    tmdbFetchedAt: snapshot.tmdbFetchedAt,
+    tmdbStaleAt: snapshot.tmdbStaleAt,
+  };
+}
+
+async function queueMovieMetadataIfNeeded(
+  transaction: PersistenceTransaction,
+  movieId: bigint,
+  tmdbId: number | null,
+  context: { environment: JobEnvironment; fetchedAt: Date }
+): Promise<JobRecord[]> {
+  if (tmdbId === null) return [];
+  const metadata = await transaction.movieMetadata.findUnique({
+    where: { movieId },
+    select: { tmdbStaleAt: true },
+  });
+  if (metadata && metadata.tmdbStaleAt.getTime() > context.fetchedAt.getTime()) {
+    return [];
+  }
+  return createMovieMetadataJobs(transaction, [tmdbId], context.environment);
 }
 
 function resolvedMovieData(movie: MovieScrapeResult) {
@@ -567,6 +705,69 @@ async function mergeMovieRelationships(
 ): Promise<void> {
   await mergeRelationshipTable(transaction, "WatchlistItem", targetId, sourceId);
   await mergeRelationshipTable(transaction, "WatchedItem", targetId, sourceId);
+}
+
+async function mergeMovieMetadata(
+  transaction: PersistenceTransaction,
+  targetId: bigint,
+  sourceId: bigint
+): Promise<void> {
+  const target = await transaction.movieMetadata.findUnique({
+    where: { movieId: targetId },
+    include: { genres: true },
+  });
+  const source = await transaction.movieMetadata.findUnique({
+    where: { movieId: sourceId },
+    include: { genres: true },
+  });
+  if (!source || (target && target.tmdbFetchedAt >= source.tmdbFetchedAt)) return;
+
+  await transaction.movieMetadata.upsert({
+    where: { movieId: targetId },
+    create: {
+      ...copyMovieMetadata(source),
+      movieId: targetId,
+    },
+    update: copyMovieMetadata(source),
+  });
+  await transaction.movieGenre.deleteMany({ where: { movieId: targetId } });
+  if (source.genres.length > 0) {
+    await transaction.movieGenre.createMany({
+      data: source.genres.map(({ genreId }) => ({
+        movieId: targetId,
+        genreId,
+      })),
+      skipDuplicates: true,
+    });
+  }
+}
+
+function copyMovieMetadata(metadata: {
+  runtimeMinutes: number | null;
+  overview: string | null;
+  tmdbTitle: string | null;
+  originalTitle: string | null;
+  originalLanguage: string | null;
+  tmdbReleaseDate: Date | null;
+  tmdbVoteAverage: number | null;
+  tmdbPosterPath: string | null;
+  tmdbBackdropPath: string | null;
+  tmdbFetchedAt: Date;
+  tmdbStaleAt: Date;
+}) {
+  return {
+    runtimeMinutes: metadata.runtimeMinutes,
+    overview: metadata.overview,
+    tmdbTitle: metadata.tmdbTitle,
+    originalTitle: metadata.originalTitle,
+    originalLanguage: metadata.originalLanguage,
+    tmdbReleaseDate: metadata.tmdbReleaseDate,
+    tmdbVoteAverage: metadata.tmdbVoteAverage,
+    tmdbPosterPath: metadata.tmdbPosterPath,
+    tmdbBackdropPath: metadata.tmdbBackdropPath,
+    tmdbFetchedAt: metadata.tmdbFetchedAt,
+    tmdbStaleAt: metadata.tmdbStaleAt,
+  };
 }
 
 async function mergeRelationshipTable(

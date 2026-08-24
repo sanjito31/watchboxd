@@ -12,6 +12,10 @@ const migrationFiles = {
     "prisma/migrations/20260821020441_letterboxd_movie_cache_expand/migration.sql",
   contraction:
     "prisma/migrations/20260821030000_letterboxd_movie_cache_contract/migration.sql",
+  userRating:
+    "prisma/migrations/20260824025734_letterboxd_user_rating/migration.sql",
+  movieMetadata:
+    "prisma/migrations/20260824160000_tmdb_movie_metadata/migration.sql",
   repair: "prisma/repair-active-jobs.sql",
   reset: "prisma/reset-cache-data.sql",
 } as const;
@@ -35,6 +39,9 @@ async function main() {
     await seedExpansionCompatibleFixture(client);
     await client.query(await migrationSql(migrationFiles.contraction));
     await assertContraction(client);
+    await client.query(await migrationSql(migrationFiles.userRating));
+    await client.query(await migrationSql(migrationFiles.movieMetadata));
+    await assertMovieMetadataMigration(client);
     await seedActiveJobs(client);
     await client.query(await migrationSql(migrationFiles.repair));
     await assertActiveJobRepair(client);
@@ -42,7 +49,7 @@ async function main() {
     await assertCacheReset(client);
     await client.query("ROLLBACK");
     console.log(
-      "Expansion, contraction, active-job repair, and cache reset passed an isolated rollback rehearsal."
+      "Expansion, contraction, TMDB metadata, active-job repair, and cache reset passed an isolated rollback rehearsal."
     );
   } catch (error) {
     await client.query("ROLLBACK").catch(() => undefined);
@@ -146,6 +153,41 @@ async function assertContraction(client: pg.Client) {
   }
 }
 
+async function assertMovieMetadataMigration(client: pg.Client) {
+  await client.query(`
+    INSERT INTO "MovieMetadata" (
+      "movieId", "runtimeMinutes", "tmdbTitle", "tmdbFetchedAt", "tmdbStaleAt"
+    )
+    SELECT "id", 120, 'Resolved Film', CURRENT_TIMESTAMP,
+      CURRENT_TIMESTAMP + INTERVAL '7 days'
+    FROM "Movie" WHERE "letterboxdSlug" = 'resolved-film';
+    INSERT INTO "Genre" ("id", "name") VALUES (18, 'Drama');
+    INSERT INTO "MovieGenre" ("movieId", "genreId")
+    SELECT "id", 18 FROM "Movie" WHERE "letterboxdSlug" = 'resolved-film';
+  `);
+  const metadata = await client.query<{ count: string }>(`
+    SELECT count(*)::text AS count
+    FROM "MovieMetadata" metadata
+    JOIN "MovieGenre" movie_genre
+      ON movie_genre."movieId" = metadata."movieId"
+    JOIN "Genre" genre ON genre."id" = movie_genre."genreId"
+    WHERE metadata."runtimeMinutes" = 120 AND genre."name" = 'Drama'
+  `);
+  if (metadata.rows[0]?.count !== "1") {
+    throw new Error("TMDB metadata migration did not preserve its relationships");
+  }
+  const rls = await client.query<{ count: string }>(`
+    SELECT count(*)::text AS count
+    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = current_schema()
+      AND c.relname IN ('MovieMetadata', 'Genre', 'MovieGenre')
+      AND c.relrowsecurity
+  `);
+  if (rls.rows[0]?.count !== "3") {
+    throw new Error("TMDB metadata tables do not all have RLS enabled");
+  }
+}
+
 async function seedActiveJobs(client: pg.Client) {
   await client.query(`
     INSERT INTO "ScrapeJob" (
@@ -198,6 +240,9 @@ async function assertCacheReset(client: pg.Client) {
       (SELECT count(*) FROM "WatchlistItem") +
       (SELECT count(*) FROM "WatchedItem") +
       (SELECT count(*) FROM "MovieAlias") +
+      (SELECT count(*) FROM "MovieGenre") +
+      (SELECT count(*) FROM "MovieMetadata") +
+      (SELECT count(*) FROM "Genre") +
       (SELECT count(*) FROM "Movie") +
       (SELECT count(*) FROM "LetterboxdUser")
     )::text AS count
