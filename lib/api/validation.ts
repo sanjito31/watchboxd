@@ -7,6 +7,12 @@ import {
   MAX_PAGE_SIZE,
   MIN_OVERLAP_USERS,
 } from "@/lib/api/contracts";
+import type {
+  ListQuery,
+  MovieFilters,
+  WatchedListQuery,
+  WatchedOverlapQuery,
+} from "@/lib/api/types";
 import { isJobType } from "@/lib/jobs/contracts";
 import {
   buildTmdbMovieJobIdentifier,
@@ -147,7 +153,7 @@ export function parsePagination(
 
 export function parseOverlapRequest(searchParams: URLSearchParams): {
   users: string[];
-  pagination: ParsedPagination;
+  query: ListQuery;
 } {
   const usersValue = searchParams.get("users");
   if (!usersValue) {
@@ -184,8 +190,118 @@ export function parseOverlapRequest(searchParams: URLSearchParams): {
 
   return {
     users,
-    pagination: parsePagination(searchParams, DEFAULT_OVERLAP_PAGE_SIZE),
+    query: parseListQuery(searchParams, DEFAULT_OVERLAP_PAGE_SIZE),
   };
+}
+
+export function parseWatchedOverlapRequest(searchParams: URLSearchParams): {
+  users: string[];
+  query: WatchedOverlapQuery;
+} {
+  const parsed = parseOverlapRequest(searchParams);
+  return {
+    users: parsed.users,
+    query: {
+      ...parseWatchedListQuery(searchParams, DEFAULT_OVERLAP_PAGE_SIZE),
+      ratingMode: parseEnum(searchParams, "ratingMode", ["any", "all"], "any"),
+    },
+  };
+}
+
+export function parseListQuery(
+  searchParams: URLSearchParams,
+  defaultPageSize: number = DEFAULT_PAGE_SIZE
+): ListQuery {
+  return {
+    ...parsePagination(searchParams, defaultPageSize),
+    includeMetadata: parseBoolean(searchParams, "includeMetadata", false),
+    filters: parseMovieFilters(searchParams),
+  };
+}
+
+export function parseWatchedListQuery(
+  searchParams: URLSearchParams,
+  defaultPageSize: number = DEFAULT_PAGE_SIZE
+): WatchedListQuery {
+  const query = parseListQuery(searchParams, defaultPageSize);
+  const userRatingMin = parseNumber(searchParams, "userRatingMin", 0, 5);
+  const userRatingMax = parseNumber(searchParams, "userRatingMax", 0, 5);
+  assertRange("userRating", userRatingMin, userRatingMax);
+  return { ...query, userRatingMin, userRatingMax };
+}
+
+export function parseMovieFilters(searchParams: URLSearchParams): MovieFilters {
+  const runtimeMin = parseInteger(searchParams, "runtimeMin", 0);
+  const runtimeMax = parseInteger(searchParams, "runtimeMax", 0);
+  const tmdbRatingMin = parseNumber(searchParams, "tmdbRatingMin", 0, 10);
+  const tmdbRatingMax = parseNumber(searchParams, "tmdbRatingMax", 0, 10);
+  const letterboxdRatingMin = parseNumber(
+    searchParams,
+    "letterboxdRatingMin",
+    0,
+    5
+  );
+  const letterboxdRatingMax = parseNumber(
+    searchParams,
+    "letterboxdRatingMax",
+    0,
+    5
+  );
+  assertRange("runtime", runtimeMin, runtimeMax);
+  assertRange("tmdbRating", tmdbRatingMin, tmdbRatingMax);
+  assertRange(
+    "letterboxdRating",
+    letterboxdRatingMin,
+    letterboxdRatingMax
+  );
+
+  const releaseDateFrom = parseDate(searchParams, "releaseDateFrom");
+  const releaseDateTo = parseDate(searchParams, "releaseDateTo");
+  if (
+    releaseDateFrom &&
+    releaseDateTo &&
+    releaseDateFrom.getTime() > releaseDateTo.getTime()
+  ) {
+    invalidFilter("releaseDateFrom must be on or before releaseDateTo");
+  }
+
+  const title = parseText(searchParams, "title", 200);
+  const originalLanguage = parseText(searchParams, "originalLanguage", 20);
+  if (originalLanguage && !/^[a-z]{2,3}(?:-[a-z0-9]{2,8})?$/i.test(originalLanguage)) {
+    invalidFilter("originalLanguage must be a language code");
+  }
+
+  return {
+    title,
+    letterboxdSlug: parseOptionalMovieSlug(searchParams),
+    letterboxdFilmId: parseInteger(searchParams, "letterboxdFilmId", 1),
+    tmdbId: parseInteger(searchParams, "tmdbId", 1, MAX_TMDB_MOVIE_ID),
+    year: parseInteger(searchParams, "year", 1870, 3000),
+    runtimeMin,
+    runtimeMax,
+    releaseDateFrom,
+    releaseDateTo,
+    originalLanguage: originalLanguage?.toLowerCase(),
+    tmdbRatingMin,
+    tmdbRatingMax,
+    letterboxdRatingMin,
+    letterboxdRatingMax,
+    genreIds: parseIntegerList(searchParams, "genreIds"),
+    genreNames: parseTextList(searchParams, "genres"),
+    genreMode: parseEnum(searchParams, "genreMode", ["any", "all"], "any"),
+  };
+}
+
+function parseOptionalMovieSlug(
+  searchParams: URLSearchParams
+): string | undefined {
+  const value = searchParams.get("letterboxdSlug");
+  if (value === null) return undefined;
+  try {
+    return normalizeMovieSlug(value);
+  } catch {
+    invalidFilter("Invalid letterboxdSlug");
+  }
 }
 
 export function isUuid(value: string): boolean {
@@ -211,4 +327,140 @@ function parsePositiveInteger(value: string | null, fallback: number): number {
     );
   }
   return parsed;
+}
+
+function parseBoolean(
+  searchParams: URLSearchParams,
+  name: string,
+  fallback: boolean
+): boolean {
+  const value = searchParams.get(name);
+  if (value === null) return fallback;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  invalidFilter(`${name} must be true or false`);
+}
+
+function parseNumber(
+  searchParams: URLSearchParams,
+  name: string,
+  min: number,
+  max: number
+): number | undefined {
+  const value = searchParams.get(name);
+  if (value === null) return undefined;
+  if (!value.trim()) invalidFilter(`${name} must be a number`);
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < min || parsed > max) {
+    invalidFilter(`${name} must be between ${min} and ${max}`);
+  }
+  return parsed;
+}
+
+function parseInteger(
+  searchParams: URLSearchParams,
+  name: string,
+  min: number,
+  max = 2_147_483_647
+): number | undefined {
+  const parsed = parseNumber(searchParams, name, min, max);
+  if (parsed !== undefined && !Number.isInteger(parsed)) {
+    invalidFilter(`${name} must be an integer`);
+  }
+  return parsed;
+}
+
+function parseText(
+  searchParams: URLSearchParams,
+  name: string,
+  maxLength: number
+): string | undefined {
+  const value = searchParams.get(name);
+  if (value === null) return undefined;
+  const normalized = value.trim();
+  if (!normalized || normalized.length > maxLength) {
+    invalidFilter(`${name} must contain 1 to ${maxLength} characters`);
+  }
+  return normalized;
+}
+
+function parseDate(
+  searchParams: URLSearchParams,
+  name: string
+): Date | undefined {
+  const value = searchParams.get(name);
+  if (value === null) return undefined;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    invalidFilter(`${name} must use YYYY-MM-DD`);
+  }
+  const date = new Date(`${value}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value) {
+    invalidFilter(`${name} must be a valid date`);
+  }
+  return date;
+}
+
+function parseIntegerList(
+  searchParams: URLSearchParams,
+  name: string
+): number[] {
+  const values = parseCsv(searchParams, name);
+  const result = values.map((value) => {
+    if (!/^[1-9]\d*$/.test(value)) {
+      invalidFilter(`${name} must be a comma-separated list of positive integers`);
+    }
+    const parsed = Number(value);
+    if (!Number.isSafeInteger(parsed) || parsed > 2_147_483_647) {
+      invalidFilter(`${name} contains an unsupported integer`);
+    }
+    return parsed;
+  });
+  return [...new Set(result)];
+}
+
+function parseTextList(searchParams: URLSearchParams, name: string): string[] {
+  return [
+    ...new Set(
+      parseCsv(searchParams, name).map((value) => {
+        if (value.length > 100) invalidFilter(`${name} entries are too long`);
+        return value.toLowerCase();
+      })
+    ),
+  ];
+}
+
+function parseCsv(searchParams: URLSearchParams, name: string): string[] {
+  const raw = searchParams.getAll(name);
+  if (raw.length === 0) return [];
+  const values = raw.flatMap((value) => value.split(",").map((part) => part.trim()));
+  if (values.some((value) => !value)) {
+    invalidFilter(`${name} must not contain empty values`);
+  }
+  return values;
+}
+
+function parseEnum<const T extends string>(
+  searchParams: URLSearchParams,
+  name: string,
+  allowed: readonly T[],
+  fallback: T
+): T {
+  const value = searchParams.get(name);
+  if (value === null) return fallback;
+  if (allowed.includes(value as T)) return value as T;
+  invalidFilter(`${name} must be one of: ${allowed.join(", ")}`);
+}
+
+function assertRange(
+  name: string,
+  min: number | undefined,
+  max: number | undefined
+): void {
+  if (min !== undefined && max !== undefined && min > max) {
+    invalidFilter(`${name}Min must be less than or equal to ${name}Max`);
+  }
+}
+
+function invalidFilter(message: string): never {
+  throw new ApiValidationError("invalid_request", message);
 }

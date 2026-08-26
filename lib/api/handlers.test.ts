@@ -8,6 +8,7 @@ const serviceMocks = vi.hoisted(() => ({
   getMovie: vi.fn(),
   getMovieByLetterboxdSlug: vi.fn(),
   getOverlap: vi.fn(),
+  getWatchedOverlap: vi.fn(),
   getJob: vi.fn(),
   requestJob: vi.fn(),
 }));
@@ -24,6 +25,7 @@ import {
   getOverlap,
   getProfile,
   getWatched,
+  getWatchedOverlap,
   getWatchlist,
   manualJobOptions,
   postJob,
@@ -286,9 +288,81 @@ describe("v1 route handlers", () => {
 
       expect(response.status).toBe(200);
       expect(await response.json()).toEqual(result);
-      expect(service).toHaveBeenCalledWith("alice", 1, 50);
+      expect(service).toHaveBeenCalledWith(
+        "alice",
+        expect.objectContaining({
+          page: 1,
+          pageSize: 50,
+          includeMetadata: false,
+          filters: expect.objectContaining({ genreMode: "any" }),
+        })
+      );
     }
   );
+
+  it("parses shared metadata filters independently from response shaping", async () => {
+    serviceMocks.getWatchlist.mockResolvedValue({
+      data: {
+        user: { username: "alice", displayName: null, avatarUrl: null },
+        items: [],
+        filmCount: 0,
+        pagination: { page: 2, pageSize: 25, total: 0, totalPages: 1 },
+      },
+      meta: {
+        cache: "hit",
+        fetchedAt: "2026-08-19T15:00:00.000Z",
+        staleAt: "2026-08-20T15:00:00.000Z",
+        refreshJobs: [],
+      },
+    });
+
+    await getWatchlist(
+      request(
+        "https://api.example/api/v1/users/alice/watchlist?page=2&pageSize=25&includeMetadata=false&title=star&year=2014&runtimeMin=120&runtimeMax=180&releaseDateFrom=2014-01-01&releaseDateTo=2014-12-31&originalLanguage=en&tmdbRatingMin=7.5&letterboxdRatingMax=4.5&genreIds=12,18&genres=Science%20Fiction&genreMode=all"
+      ),
+      { params: Promise.resolve({ username: "alice" }) }
+    );
+
+    expect(serviceMocks.getWatchlist).toHaveBeenCalledWith("alice", {
+      page: 2,
+      pageSize: 25,
+      includeMetadata: false,
+      filters: {
+        title: "star",
+        letterboxdSlug: undefined,
+        letterboxdFilmId: undefined,
+        tmdbId: undefined,
+        year: 2014,
+        runtimeMin: 120,
+        runtimeMax: 180,
+        releaseDateFrom: new Date("2014-01-01T00:00:00.000Z"),
+        releaseDateTo: new Date("2014-12-31T00:00:00.000Z"),
+        originalLanguage: "en",
+        tmdbRatingMin: 7.5,
+        tmdbRatingMax: undefined,
+        letterboxdRatingMin: undefined,
+        letterboxdRatingMax: 4.5,
+        genreIds: [12, 18],
+        genreNames: ["science fiction"],
+        genreMode: "all",
+      },
+    });
+  });
+
+  it("rejects inverted filter ranges before service access", async () => {
+    const response = await getWatched(
+      request(
+        "https://api.example/api/v1/users/alice/watched?runtimeMin=180&runtimeMax=90"
+      ),
+      { params: Promise.resolve({ username: "alice" }) }
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({
+      error: { code: "invalid_request", message: expect.stringContaining("runtime") },
+    });
+    expect(serviceMocks.getWatched).not.toHaveBeenCalled();
+  });
 
   it("passes a validated TMDB ID to the movie service", async () => {
     serviceMocks.getMovie.mockResolvedValue({
@@ -390,13 +464,45 @@ describe("v1 route handlers", () => {
     expect(valid.status).toBe(200);
     expect(serviceMocks.getOverlap).toHaveBeenCalledWith(
       ["alice", "bob"],
-      1,
-      10
+      expect.objectContaining({ page: 1, pageSize: 10 })
     );
     expect(invalid.status).toBe(400);
     expect(await invalid.json()).toMatchObject({
       error: { code: "invalid_overlap_users" },
     });
+  });
+
+  it("parses watched-overlap rating semantics", async () => {
+    serviceMocks.getWatchedOverlap.mockResolvedValue({
+      data: {
+        users: [],
+        films: [],
+        pagination: { page: 1, pageSize: 10, total: 0, totalPages: 1 },
+      },
+      meta: {
+        cache: "hit",
+        fetchedAt: "2026-08-19T15:00:00.000Z",
+        staleAt: "2026-08-20T15:00:00.000Z",
+        refreshJobs: [],
+      },
+    });
+
+    const response = await getWatchedOverlap(
+      request(
+        "https://api.example/api/v1/overlap/watched?users=alice,bob&includeMetadata=true&userRatingMin=3.5&userRatingMax=5&ratingMode=all"
+      )
+    );
+
+    expect(response.status).toBe(200);
+    expect(serviceMocks.getWatchedOverlap).toHaveBeenCalledWith(
+      ["alice", "bob"],
+      expect.objectContaining({
+        includeMetadata: true,
+        userRatingMin: 3.5,
+        userRatingMax: 5,
+        ratingMode: "all",
+      })
+    );
   });
 
   it("returns normalized polling status and 404 for unknown jobs", async () => {

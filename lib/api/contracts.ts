@@ -115,6 +115,31 @@ export interface MovieDto {
   tmdbId: number | null;
   letterboxdPoster: string | null;
   letterboxdRating: number | null;
+  metadata?: MovieMetadataDto | null;
+}
+
+export interface GenreDto {
+  id: number;
+  name: string;
+}
+
+export interface MovieMetadataDto {
+  runtimeMinutes: number | null;
+  overview: string | null;
+  tmdbTitle: string | null;
+  originalTitle: string | null;
+  originalLanguage: string | null;
+  tmdbReleaseDate: string | null;
+  tmdbVoteAverage: number | null;
+  tmdbPosterPath: string | null;
+  tmdbBackdropPath: string | null;
+  tmdbFetchedAt: string;
+  tmdbStaleAt: string;
+  genres: GenreDto[];
+}
+
+export interface FullMovieDto extends MovieDto {
+  metadata: MovieMetadataDto | null;
 }
 
 export interface ListItemDto {
@@ -162,9 +187,26 @@ export interface OverlapDto {
   pagination: PaginationMeta;
 }
 
+export interface WatchedByDto extends ProfileSummaryDto {
+  userRating: number | null;
+}
+
+export interface WatchedOverlapFilmDto extends MovieDto {
+  watchedBy: WatchedByDto[];
+  watchedCount: number;
+  partySize: number;
+}
+
+export interface WatchedOverlapDto {
+  users: ProfileSummaryDto[];
+  films: WatchedOverlapFilmDto[];
+  pagination: PaginationMeta;
+}
+
 export type ProfileApiResponse = ApiResourceResponse<ProfileDto>;
 export type WatchlistApiResponse = ApiResourceResponse<WatchlistDto>;
 export type WatchedApiResponse = ApiResourceResponse<WatchedDto>;
 export type NetworkApiResponse = ApiResourceResponse<NetworkDto>;
-export type MovieApiResponse = ApiResourceResponse<MovieDto>;
+export type MovieApiResponse = ApiResourceResponse<FullMovieDto>;
 export type OverlapApiResponse = ApiResourceResponse<OverlapDto>;
+export type WatchedOverlapApiResponse = ApiResourceResponse<WatchedOverlapDto>;

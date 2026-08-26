@@ -6,7 +6,7 @@ export const CACHE_TTL_MS = {
   watchlist: 6 * HOUR_MS,
   watched: 6 * HOUR_MS,
   movie: 24 * HOUR_MS,
-  movieMetadata: 7 * 24 * HOUR_MS,
+  movieMetadata: 90 * 24 * HOUR_MS,
   notFound: 1 * HOUR_MS,
 } as const;
 

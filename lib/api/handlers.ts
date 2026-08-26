@@ -12,9 +12,11 @@ import {
   normalizeMovieSlug,
   normalizeUsername,
   parseManualJobRequest,
+  parseListQuery,
   parseOverlapRequest,
-  parsePagination,
   parseTmdbMovieId,
+  parseWatchedListQuery,
+  parseWatchedOverlapRequest,
 } from "@/lib/api/validation";
 
 type ParamContext<TKey extends string> = {
@@ -39,14 +41,10 @@ export async function getWatchlist(
 ): Promise<Response> {
   try {
     const username = normalizeUsername((await params).username);
-    const pagination = parsePagination(new URL(request.url).searchParams);
+    const query = parseListQuery(new URL(request.url).searchParams);
     return resourceResponse(
       request,
-      await apiService.getWatchlist(
-        username,
-        pagination.page,
-        pagination.pageSize
-      )
+      await apiService.getWatchlist(username, query)
     );
   } catch (error) {
     return handleRouteError(request, error);
@@ -59,14 +57,10 @@ export async function getWatched(
 ): Promise<Response> {
   try {
     const username = normalizeUsername((await params).username);
-    const pagination = parsePagination(new URL(request.url).searchParams);
+    const query = parseWatchedListQuery(new URL(request.url).searchParams);
     return resourceResponse(
       request,
-      await apiService.getWatched(
-        username,
-        pagination.page,
-        pagination.pageSize
-      )
+      await apiService.getWatched(username, query)
     );
   } catch (error) {
     return handleRouteError(request, error);
@@ -117,11 +111,19 @@ export async function getOverlap(request: Request): Promise<Response> {
     const parsed = parseOverlapRequest(new URL(request.url).searchParams);
     return resourceResponse(
       request,
-      await apiService.getOverlap(
-        parsed.users,
-        parsed.pagination.page,
-        parsed.pagination.pageSize
-      )
+      await apiService.getOverlap(parsed.users, parsed.query)
+    );
+  } catch (error) {
+    return handleRouteError(request, error);
+  }
+}
+
+export async function getWatchedOverlap(request: Request): Promise<Response> {
+  try {
+    const parsed = parseWatchedOverlapRequest(new URL(request.url).searchParams);
+    return resourceResponse(
+      request,
+      await apiService.getWatchedOverlap(parsed.users, parsed.query)
     );
   } catch (error) {
     return handleRouteError(request, error);

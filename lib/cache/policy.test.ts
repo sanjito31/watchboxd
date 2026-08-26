@@ -15,7 +15,7 @@ describe("cache policy", () => {
       watchlist: 6 * 60 * 60 * 1_000,
       watched: 6 * 60 * 60 * 1_000,
       movie: 24 * 60 * 60 * 1_000,
-      movieMetadata: 7 * 24 * 60 * 60 * 1_000,
+      movieMetadata: 90 * 24 * 60 * 60 * 1_000,
       notFound: 60 * 60 * 1_000,
     });
   });

@@ -5,7 +5,9 @@ import type {
   ApiJobResponse,
   ApiJobSummary,
   ListItemDto,
+  FullMovieDto,
   MovieEnrichmentMeta,
+  MovieMetadataDto,
   MovieDto,
   NetworkDto,
   OverlapDto,
@@ -14,6 +16,8 @@ import type {
   ProfileDto,
   ProfileSummaryDto,
   WatchedDto,
+  WatchedOverlapDto,
+  WatchedOverlapFilmDto,
   WatchedListItemDto,
   WatchlistDto,
 } from "@/lib/api/contracts";
@@ -24,12 +28,17 @@ import type {
   ApiRepository,
   CacheStamp,
   JobGateway,
+  ListQuery,
   ListItemRecord,
   MovieRecord,
+  OverlapGroupRecord,
   StoredJobRecord,
   UserListRecord,
   UserRecord,
   WatchedListItemRecord,
+  WatchedListQuery,
+  WatchedOverlapGroupRecord,
+  WatchedOverlapQuery,
 } from "@/lib/api/types";
 
 type ResourceResult<T> =
@@ -64,10 +73,9 @@ export class ApiService {
 
   async getWatchlist(
     username: string,
-    page: number,
-    pageSize: number
+    query: ListQuery
   ): Promise<ResourceResult<WatchlistDto>> {
-    const list = await this.repository.getWatchlist(username);
+    const list = await this.repository.getWatchlist(username, query);
     if (!list || classifyFreshness(list.user.watchlist, this.now()) === "missing") {
       return this.missOrNotFound("watchlist", username);
     }
@@ -75,18 +83,15 @@ export class ApiService {
       list,
       "watchlist",
       username,
-      page,
-      pageSize,
-      toListItem
+      (item) => toListItem(item, query.includeMetadata)
     );
   }
 
   async getWatched(
     username: string,
-    page: number,
-    pageSize: number
+    query: WatchedListQuery
   ): Promise<ResourceResult<WatchedDto>> {
-    const list = await this.repository.getWatched(username);
+    const list = await this.repository.getWatched(username, query);
     if (!list || classifyFreshness(list.user.watched, this.now()) === "missing") {
       return this.missOrNotFound("watched", username);
     }
@@ -94,9 +99,7 @@ export class ApiService {
       list,
       "watched",
       username,
-      page,
-      pageSize,
-      toWatchedListItem
+      (item) => toWatchedListItem(item, query.includeMetadata)
     );
   }
 
@@ -122,7 +125,7 @@ export class ApiService {
     );
   }
 
-  async getMovie(tmdbId: number): Promise<ResourceResult<MovieDto>> {
+  async getMovie(tmdbId: number): Promise<ResourceResult<FullMovieDto>> {
     const identifier = buildTmdbMovieJobIdentifier(tmdbId);
     return this.movieResponse(
       await this.repository.getMovieByTmdbId(tmdbId),
@@ -130,7 +133,9 @@ export class ApiService {
     );
   }
 
-  async getMovieByLetterboxdSlug(slug: string): Promise<ResourceResult<MovieDto>> {
+  async getMovieByLetterboxdSlug(
+    slug: string
+  ): Promise<ResourceResult<FullMovieDto>> {
     return this.movieResponse(
       await this.repository.getMovieByLetterboxdSlug(slug),
       slug
@@ -139,16 +144,13 @@ export class ApiService {
 
   async getOverlap(
     usernames: readonly string[],
-    page: number,
-    pageSize: number
+    query: ListQuery
   ): Promise<ResourceResult<OverlapDto>> {
-    const watchlists = await this.repository.getWatchlists(usernames);
-    const byUsername = new Map(
-      watchlists.map((watchlist) => [watchlist.user.username, watchlist])
-    );
+    const users = await this.repository.getUsers(usernames);
+    const byUsername = new Map(users.map((user) => [user.username, user]));
     const missing = usernames.filter((username) => {
-      const list = byUsername.get(username);
-      return !list || classifyFreshness(list.user.watchlist, this.now()) === "missing";
+      const user = byUsername.get(username);
+      return !user || classifyFreshness(user.watchlist, this.now()) === "missing";
     });
     if (missing.length > 0) {
       const jobs = await Promise.all(
@@ -158,37 +160,77 @@ export class ApiService {
       return failed ? failedJobResponse(failed) : accepted(jobs);
     }
 
-    const orderedLists = usernames.map(
-      (username) => byUsername.get(username) as UserListRecord
+    const orderedUsers = usernames.map(
+      (username) => byUsername.get(username) as UserRecord
     );
-    const profiles = orderedLists.map((list) => toProfileSummary(list.user));
-    const pagination = paginate(groupOverlap(orderedLists), page, pageSize);
-    const pageMovies = pagination.items.map((group) => group.movie);
-    const pendingResult = await this.pendingMovies(pageMovies);
-    if (pendingResult) return pendingResult;
-
+    const profiles = orderedUsers.map(toProfileSummary);
+    const page = await this.repository.getWatchlistOverlap(usernames, query);
     const data: OverlapDto = {
       users: profiles,
-      films: pagination.items.map((group) =>
-        toOverlapFilm(group.movie, group.presentFor, profiles.length)
+      films: page.groups.map((group) =>
+        toOverlapFilm(group, profiles.length, query.includeMetadata)
       ),
-      pagination: pagination.meta,
+      pagination: page.pagination,
     };
-    const listStamps = orderedLists.map((list) => list.user.watchlist);
-    const stamp = aggregateStamps([...listStamps, ...pageMovies.map(movieStamp)]);
+    const stamp = aggregateStamps(orderedUsers.map((user) => user.watchlist));
     const refreshJobs = await this.refreshStaleResources([
-      ...orderedLists.map((list) => ({
-        stamp: list.user.watchlist,
+      ...orderedUsers.map((user) => ({
+        stamp: user.watchlist,
         type: "watchlist" as const,
-        identifier: list.user.username,
-      })),
-      ...pageMovies.map((movie) => ({
-        stamp: movie.letterboxd,
-        type: "movie" as const,
-        identifier: movie.letterboxdSlug,
+        identifier: user.username,
       })),
     ]);
-    return cached(data, stamp, refreshJobs);
+    return cached(
+      data,
+      stamp,
+      refreshJobs,
+      movieEnrichmentMeta(page.groups.map((group) => group.movie))
+    );
+  }
+
+  async getWatchedOverlap(
+    usernames: readonly string[],
+    query: WatchedOverlapQuery
+  ): Promise<ResourceResult<WatchedOverlapDto>> {
+    const users = await this.repository.getUsers(usernames);
+    const byUsername = new Map(users.map((user) => [user.username, user]));
+    const missing = usernames.filter((username) => {
+      const user = byUsername.get(username);
+      return !user || classifyFreshness(user.watched, this.now()) === "missing";
+    });
+    if (missing.length > 0) {
+      const jobs = await Promise.all(
+        missing.map((username) => this.jobs.ensureJob("watched", username))
+      );
+      const failed = jobs.find((job) => job.status === "failed");
+      return failed ? failedJobResponse(failed) : accepted(jobs);
+    }
+
+    const orderedUsers = usernames.map(
+      (username) => byUsername.get(username) as UserRecord
+    );
+    const page = await this.repository.getWatchedOverlap(usernames, query);
+    const data: WatchedOverlapDto = {
+      users: orderedUsers.map(toProfileSummary),
+      films: page.groups.map((group) =>
+        toWatchedOverlapFilm(group, orderedUsers.length, query.includeMetadata)
+      ),
+      pagination: page.pagination,
+    };
+    const stamp = aggregateStamps(orderedUsers.map((user) => user.watched));
+    const refreshJobs = await this.refreshStaleResources(
+      orderedUsers.map((user) => ({
+        stamp: user.watched,
+        type: "watched" as const,
+        identifier: user.username,
+      }))
+    );
+    return cached(
+      data,
+      stamp,
+      refreshJobs,
+      movieEnrichmentMeta(page.groups.map((group) => group.movie))
+    );
   }
 
   async getJob(id: string): Promise<ApiJobResponse | ApiErrorResponse> {
@@ -213,8 +255,6 @@ export class ApiService {
     list: UserListRecord<TRecord>,
     kind: "watchlist" | "watched",
     username: string,
-    page: number,
-    pageSize: number,
     mapItem: (item: TRecord) => TDto
   ): Promise<
     ResourceResult<{
@@ -224,16 +264,15 @@ export class ApiService {
       pagination: PaginationMeta;
     }>
   > {
-    const pagination = paginate(list.items, page, pageSize);
-    const pageMovies = pagination.items.map((item) => item.movie);
+    const pageMovies = list.items.map((item) => item.movie);
 
     const listStamp =
       kind === "watchlist" ? list.user.watchlist : list.user.watched;
     const data = {
       user: toProfileSummary(list.user),
-      items: pagination.items.map(mapItem),
-      filmCount: list.items.length,
-      pagination: pagination.meta,
+      items: list.items.map(mapItem),
+      filmCount: list.total,
+      pagination: list.pagination,
     };
     const refreshJobs = await this.refreshStaleResources([
       { stamp: listStamp, type: kind, identifier: username },
@@ -249,7 +288,7 @@ export class ApiService {
   private async movieResponse(
     movie: MovieRecord | null,
     identifier: string
-  ): Promise<ResourceResult<MovieDto>> {
+  ): Promise<ResourceResult<FullMovieDto>> {
     if (!movie || movie.resolutionStatus !== "resolved") {
       return this.missOrNotFound("movie", identifier);
     }
@@ -271,21 +310,7 @@ export class ApiService {
         )
       );
     }
-    return cached(toMovieDto(movie), movie.letterboxd, refreshJobs);
-  }
-
-  private async pendingMovies(
-    movies: readonly MovieRecord[]
-  ): Promise<ApiAcceptedResponse | ApiErrorResponse | null> {
-    const pending = movies.filter((movie) => movie.resolutionStatus === "pending");
-    if (pending.length === 0) return null;
-    const jobs = await Promise.all(
-      pending.map((movie) =>
-        this.jobs.ensureJob("movie", movie.letterboxdSlug)
-      )
-    );
-    const failed = jobs.find((job) => job.status === "failed");
-    return failed ? failedJobResponse(failed) : accepted(jobs);
+    return cached(toFullMovieDto(movie), movie.letterboxd, refreshJobs);
   }
 
   private async refreshStaleResources(
@@ -437,17 +462,27 @@ function toProfileSummary(user: UserRecord): ProfileSummaryDto {
   };
 }
 
-function toListItem(item: { position: number; movie: MovieRecord }): ListItemDto {
-  return { position: item.position, movie: toMovieDto(item.movie) };
+function toListItem(
+  item: { position: number; movie: MovieRecord },
+  includeMetadata: boolean
+): ListItemDto {
+  return {
+    position: item.position,
+    movie: toMovieDto(item.movie, includeMetadata),
+  };
 }
 
 function toWatchedListItem(
-  item: WatchedListItemRecord
+  item: WatchedListItemRecord,
+  includeMetadata: boolean
 ): WatchedListItemDto {
-  return { ...toListItem(item), userRating: item.userRating };
+  return {
+    ...toListItem(item, includeMetadata),
+    userRating: item.userRating,
+  };
 }
 
-function toMovieDto(movie: MovieRecord): MovieDto {
+function toMovieDto(movie: MovieRecord, includeMetadata: boolean): MovieDto {
   return {
     letterboxdSlug: movie.letterboxdSlug,
     title: movie.title,
@@ -456,11 +491,39 @@ function toMovieDto(movie: MovieRecord): MovieDto {
     tmdbId: movie.tmdbId,
     letterboxdPoster: movie.letterboxdPoster,
     letterboxdRating: movie.letterboxdRating,
+    ...(includeMetadata
+      ? { metadata: movie.metadata ? toMetadataDto(movie.metadata) : null }
+      : {}),
   };
 }
 
-function movieStamp(movie: MovieRecord): CacheStamp {
-  return movie.letterboxd;
+function toFullMovieDto(movie: MovieRecord): FullMovieDto {
+  return {
+    ...toMovieDto(movie, false),
+    metadata: movie.metadata ? toMetadataDto(movie.metadata) : null,
+  };
+}
+
+function toMetadataDto(
+  metadata: NonNullable<MovieRecord["metadata"]>
+): MovieMetadataDto {
+  if (!metadata.fetchedAt || !metadata.staleAt) {
+    throw new Error("Stored movie metadata requires complete timestamps");
+  }
+  return {
+    runtimeMinutes: metadata.runtimeMinutes,
+    overview: metadata.overview,
+    tmdbTitle: metadata.tmdbTitle,
+    originalTitle: metadata.originalTitle,
+    originalLanguage: metadata.originalLanguage,
+    tmdbReleaseDate: metadata.tmdbReleaseDate?.toISOString().slice(0, 10) ?? null,
+    tmdbVoteAverage: metadata.tmdbVoteAverage,
+    tmdbPosterPath: metadata.tmdbPosterPath,
+    tmdbBackdropPath: metadata.tmdbBackdropPath,
+    tmdbFetchedAt: metadata.fetchedAt.toISOString(),
+    tmdbStaleAt: metadata.staleAt.toISOString(),
+    genres: metadata.genres,
+  };
 }
 
 function movieEnrichmentMeta(
@@ -489,71 +552,28 @@ function aggregateStamps(stamps: readonly CacheStamp[]): CacheStamp {
   };
 }
 
-function groupOverlap(lists: readonly UserListRecord[]) {
-  const groups = new Map<
-    string,
-    {
-      movie: MovieRecord;
-      presentFor: ProfileSummaryDto[];
-      usernames: Set<string>;
-    }
-  >();
-  for (const list of lists) {
-    const profile = toProfileSummary(list.user);
-    for (const item of list.items) {
-      if (item.movie.resolutionStatus === "failed") continue;
-      const key =
-        item.movie.tmdbId !== null
-          ? `tmdb:${item.movie.tmdbId}`
-          : `letterboxd:${item.movie.letterboxdSlug}`;
-      const existing = groups.get(key);
-      if (!existing) {
-        groups.set(key, {
-          movie: item.movie,
-          presentFor: [profile],
-          usernames: new Set([profile.username]),
-        });
-      } else if (!existing.usernames.has(profile.username)) {
-        existing.usernames.add(profile.username);
-        existing.presentFor.push(profile);
-      }
-    }
-  }
-  return [...groups.values()]
-    .filter((group) => group.presentFor.length >= 2)
-    .sort((a, b) => {
-      const countDifference = b.presentFor.length - a.presentFor.length;
-      return (
-        countDifference ||
-        a.movie.title.localeCompare(b.movie.title, "en", { sensitivity: "base" })
-      );
-    });
-}
-
 function toOverlapFilm(
-  movie: MovieRecord,
-  presentFor: ProfileSummaryDto[],
-  partySize: number
+  group: OverlapGroupRecord,
+  partySize: number,
+  includeMetadata: boolean
 ): OverlapFilmDto {
   return {
-    ...toMovieDto(movie),
-    presentFor,
-    overlapCount: presentFor.length,
+    ...toMovieDto(group.movie, includeMetadata),
+    presentFor: group.presentFor,
+    overlapCount: group.presentFor.length,
     partySize,
   };
 }
 
-function paginate<T>(
-  values: readonly T[],
-  requestedPage: number,
-  pageSize: number
-): { items: T[]; meta: PaginationMeta } {
-  const total = values.length;
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const page = Math.min(requestedPage, totalPages);
-  const start = (page - 1) * pageSize;
+function toWatchedOverlapFilm(
+  group: WatchedOverlapGroupRecord,
+  partySize: number,
+  includeMetadata: boolean
+): WatchedOverlapFilmDto {
   return {
-    items: values.slice(start, start + pageSize),
-    meta: { page, pageSize, total, totalPages },
+    ...toMovieDto(group.movie, includeMetadata),
+    watchedBy: group.watchedBy,
+    watchedCount: group.watchedBy.length,
+    partySize,
   };
 }

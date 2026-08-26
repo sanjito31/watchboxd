@@ -39,7 +39,7 @@ describe("fetchTmdbMovieMetadata", () => {
         { id: 18, name: "Drama" },
       ],
       tmdbFetchedAt: fetchedAt,
-      tmdbStaleAt: new Date("2026-08-31T12:00:00.000Z"),
+      tmdbStaleAt: new Date("2026-11-22T12:00:00.000Z"),
     });
     expect(fetcher).toHaveBeenCalledWith(
       "https://api.themoviedb.org/3/movie/157336?language=en-US",

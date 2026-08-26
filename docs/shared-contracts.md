@@ -1,6 +1,6 @@
 # Shared contracts
 
-Status: updated on **2026-08-21** for the Letterboxd-only cache.
+Status: updated on **2026-08-25** for the TMDB metadata API expansion.
 
 The source-of-truth contract files are:
 
@@ -17,7 +17,10 @@ Their page-scoped `meta.enrichment` object distinguishes pending and failed
 movie slugs from authoritative nullable movie fields. Only a missing list
 snapshot returns `202`; child movie enrichment does not block a completed list
 response. List requests do not create, inspect, or refresh per-movie jobs;
-individual movie routes own movie freshness and recovery.
+individual movie routes own movie freshness and recovery. Direct movie routes
+always return the full nested TMDB metadata object (or `null`) and genres.
+List and overlap routes include it only with `includeMetadata=true`; filtering
+is independent of that response-shaping option.
 
 ## Database migration contract
 

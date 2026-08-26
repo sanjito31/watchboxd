@@ -4,13 +4,13 @@ Compare public Letterboxd watchlists with friends and find films you have in com
 
 Add people by username or profile URL, scrape their public watchlists on the server, and browse overlap ranked by how many party members want to see each film (at least 2 in common). The UI uses Letterboxd’s dark palette and shows who has each title with profile avatars.
 
-**Live site:** [https://watchboxd-awj9cp8vv-sanjay-kumars-projects-790869c2.vercel.app/](https://watchboxd-awj9cp8vv-sanjay-kumars-projects-790869c2.vercel.app/)
+**Live site:** [https://watchboxd.vercel.app](https://watchboxd.vercel.app)
 
 ## Features
 
 - **Watch party** — up to 10 Letterboxd users per party
 - **Friend suggestions** — after adding someone, browse their mutual followers and following list to add more people quickly
-- **Ranked overlap** — films sorted by overlap count (e.g. 4 of 5 watchlists), 10 per page
+- **Watchlist intersection** — films present on every selected watchlist, 10 per page
 - **Shareable links** — party saved in the URL (`?users=alice,bob`) and in `localStorage`
 - **Posters** — Letterboxd artwork with a local placeholder fallback
 
@@ -124,20 +124,22 @@ create idempotent `ScrapeJob` rows and publish a minimal message to the
 Letterboxd. List workers atomically save lightweight movies, ordered
 relationships, and deduplicated child movie jobs. Movie workers then scrape
 only the Letterboxd film page for its title, year, film ID, outbound TMDB ID,
-primary poster, and rating. TMDB is never requested by this application; API
-consumers can use the returned `tmdbId` directly if they need other metadata.
+primary poster, and rating. TMDB workers enrich resolved films with runtime,
+titles, language, release date, ratings, artwork paths, overview, and genres.
 The browser follows `202 Accepted` job descriptors and computes no overlap
 locally.
 
 | Route | Purpose |
 |-------|---------|
 | `GET /api/v1/users/{username}` | Cached profile or profile job |
-| `GET /api/v1/users/{username}/watchlist` | Paginated watchlist |
-| `GET /api/v1/users/{username}/watched` | Paginated deduplicated watched titles, including nullable `userRating` |
+| `GET /api/v1/users/{username}/watchlist` | Filtered, paginated watchlist |
+| `GET /api/v1/users/{username}/watched` | Filtered, paginated watched titles, including nullable `userRating` |
 | `GET /api/v1/users/{username}/network` | Mutual and following network |
-| `GET /api/v1/movies/{tmdbId}` | Follow Letterboxd's `/tmdb/{id}/` redirect and return Letterboxd movie data |
-| `GET /api/v1/movies/letterboxd/{letterboxdSlug}` | Movie lookup by Letterboxd slug or known alias |
-| `GET /api/v1/overlap?users=a,b` | Server-computed paginated overlap |
+| `GET /api/v1/movies/{tmdbId}` | Full Letterboxd and TMDB movie record by TMDB ID |
+| `GET /api/v1/movies/letterboxd/{letterboxdSlug}` | Full movie record by Letterboxd slug or known alias |
+| `GET /api/v1/overlap?users=a,b` | Watchlist intersection (compatibility route) |
+| `GET /api/v1/overlap/watchlist?users=a,b` | Watchlist intersection alias |
+| `GET /api/v1/overlap/watched?users=a,b` | Deduplicated watched union with per-user ratings |
 | `GET /api/v1/jobs/{jobId}` | Pollable background-job status |
 | `POST /api/v1/jobs` | Authenticated manual scrape trigger that bypasses cache freshness |
 
@@ -146,10 +148,12 @@ Fresh responses return `200`; cache misses return `202` with `Location` and
 Once a watchlist or watched snapshot exists, its paginated
 response returns provisional title, year, slug, and poster data without waiting
 for child movie jobs. Page-scoped `meta.enrichment` reports `complete`,
-`pendingSlugs`, and `failedSlugs`. Failed enrichment remains visible in these
-two lists; overlap continues to require resolved page movies and omits failed
-ones. List responses do not create or inspect per-movie jobs; individual movie
-routes handle movie freshness and recovery.
+`pendingSlugs`, and `failedSlugs`. List and overlap responses do not create or
+inspect per-movie jobs; individual movie routes handle movie freshness and
+TMDB metadata refresh. Add `includeMetadata=true` to list or overlap requests
+to include the nested metadata object and genres. Metadata filters work whether
+or not response metadata is included. See [`docs/api-v1.md`](docs/api-v1.md)
+for the shared filter contract and examples.
 
 To force a watched-list refresh before its cache becomes stale, configure the
 server-only `MANUAL_JOB_API_KEY` environment variable and submit a job:

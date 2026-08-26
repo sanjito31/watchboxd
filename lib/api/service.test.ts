@@ -9,6 +9,7 @@ import type {
   UserListRecord,
   UserRecord,
   WatchedListItemRecord,
+  ListQuery,
 } from "./types";
 
 const now = new Date("2026-08-20T12:00:00.000Z");
@@ -31,8 +32,8 @@ describe("ApiService Letterboxd movie cache", () => {
 
       const response =
         kind === "watchlist"
-          ? await service.getWatchlist("alice", 1, 10)
-          : await service.getWatched("alice", 1, 10);
+          ? await service.getWatchlist("alice", query())
+          : await service.getWatched("alice", query());
 
       expect(response).toMatchObject({
         data: null,
@@ -47,18 +48,20 @@ describe("ApiService Letterboxd movie cache", () => {
 
   it("keeps failed movie enrichment in watchlist pagination", async () => {
     const repository = fakeRepository();
-    repository.getWatchlist = vi.fn().mockResolvedValue(
-      list([
-        movie("gone", "failed"),
-        movie("resolved", "resolved"),
-        movie("resolved-two", "resolved"),
-      ])
-    );
+    const snapshot = list([
+      movie("gone", "failed"),
+      movie("resolved", "resolved"),
+      movie("resolved-two", "resolved"),
+    ]);
+    repository.getWatchlist = vi.fn().mockResolvedValue({
+      ...snapshot,
+      items: snapshot.items.slice(0, 1),
+      pagination: { page: 1, pageSize: 1, total: 3, totalPages: 3 },
+    });
     const jobs = fakeJobs();
     const response = await new ApiService(repository, jobs, () => now).getWatchlist(
       "alice",
-      1,
-      1
+      query({ pageSize: 1 })
     );
 
     expect("data" in response && response.data).toMatchObject({
@@ -86,7 +89,7 @@ describe("ApiService Letterboxd movie cache", () => {
         tmdbId: null,
         letterboxdRating: null,
         letterboxd: { fetchedAt: null, staleAt: null },
-        metadata: { fetchedAt: null, staleAt: null },
+        metadata: null,
       } satisfies MovieRecord;
       const snapshot = list([
         movie("ready", "resolved"),
@@ -102,8 +105,8 @@ describe("ApiService Letterboxd movie cache", () => {
       const service = new ApiService(repository, jobs, () => now);
       const response =
         kind === "watchlist"
-          ? await service.getWatchlist("alice", 1, 10)
-          : await service.getWatched("alice", 1, 10);
+          ? await service.getWatchlist("alice", query())
+          : await service.getWatched("alice", query());
 
       expect(response).toMatchObject({
         data: {
@@ -143,8 +146,7 @@ describe("ApiService Letterboxd movie cache", () => {
     const jobs = fakeJobs();
     const response = await new ApiService(repository, jobs, () => now).getWatchlist(
       "alice",
-      1,
-      10
+      query()
     );
 
     expect("meta" in response && response.meta).toMatchObject({
@@ -154,7 +156,7 @@ describe("ApiService Letterboxd movie cache", () => {
     expect(jobs.ensureJob).toHaveBeenCalledTimes(1);
   });
 
-  it("returns the lean movie DTO with a nullable TMDB id", async () => {
+  it("returns the full movie DTO with metadata and genres", async () => {
     const repository = fakeRepository();
     repository.getMovieByLetterboxdSlug = vi
       .fn()
@@ -173,6 +175,20 @@ describe("ApiService Letterboxd movie cache", () => {
       tmdbId: null,
       letterboxdPoster: "https://a.ltrbxd.com/no-tmdb.jpg",
       letterboxdRating: 4.2,
+      metadata: {
+        runtimeMinutes: 120,
+        overview: "Overview",
+        tmdbTitle: "TMDB title",
+        originalTitle: "Original title",
+        originalLanguage: "en",
+        tmdbReleaseDate: "2026-01-02",
+        tmdbVoteAverage: 8.1,
+        tmdbPosterPath: "/poster.jpg",
+        tmdbBackdropPath: "/backdrop.jpg",
+        tmdbFetchedAt: fresh.fetchedAt.toISOString(),
+        tmdbStaleAt: fresh.staleAt.toISOString(),
+        genres: [{ id: 18, name: "Drama" }],
+      },
     });
   });
 
@@ -181,7 +197,7 @@ describe("ApiService Letterboxd movie cache", () => {
     repository.getMovieByTmdbId = vi.fn().mockResolvedValue({
       ...movie("interstellar", "resolved"),
       tmdbId: 157336,
-      metadata: { fetchedAt: null, staleAt: null },
+      metadata: null,
     });
     const jobs = fakeJobs();
 
@@ -209,7 +225,7 @@ describe("ApiService Letterboxd movie cache", () => {
       repository,
       fakeJobs(),
       () => now
-    ).getWatched("alice", 1, 10);
+    ).getWatched("alice", query());
 
     expect("data" in response && response.data?.items).toEqual([
       expect.objectContaining({ position: 0, userRating: 4.5 }),
@@ -230,6 +246,86 @@ describe("ApiService Letterboxd movie cache", () => {
     });
     expect(jobs.ensureJob).toHaveBeenCalledWith("watched", "alice");
     expect(repository.getWatched).not.toHaveBeenCalled();
+  });
+
+  it("returns the repository's paginated watchlist intersection without movie refresh fan-out", async () => {
+    const repository = fakeRepository();
+    const alice = user();
+    const bob = { ...user(), username: "bob", displayName: "Bob" };
+    repository.getUsers = vi.fn().mockResolvedValue([alice, bob]);
+    repository.getWatchlistOverlap = vi.fn().mockResolvedValue({
+      groups: [
+        {
+          movie: movie("shared", "pending"),
+          presentFor: [
+            { username: "alice", displayName: "Alice", avatarUrl: null },
+            { username: "bob", displayName: "Bob", avatarUrl: null },
+          ],
+        },
+      ],
+      pagination: { page: 1, pageSize: 10, total: 1, totalPages: 1 },
+    });
+    const jobs = fakeJobs();
+
+    const response = await new ApiService(repository, jobs, () => now).getOverlap(
+      ["alice", "bob"],
+      query()
+    );
+
+    expect(response).toMatchObject({
+      data: {
+        films: [{ letterboxdSlug: "shared", overlapCount: 2, partySize: 2 }],
+        pagination: { total: 1 },
+      },
+      meta: { enrichment: { pendingSlugs: ["shared"] } },
+    });
+    expect(jobs.ensureJob).not.toHaveBeenCalled();
+  });
+
+  it("returns watched union attribution and each requested user's rating", async () => {
+    const repository = fakeRepository();
+    const alice = user();
+    const bob = { ...user(), username: "bob", displayName: "Bob" };
+    repository.getUsers = vi.fn().mockResolvedValue([alice, bob]);
+    repository.getWatchedOverlap = vi.fn().mockResolvedValue({
+      groups: [
+        {
+          movie: movie("shared-watch", "resolved"),
+          watchedBy: [
+            { username: "alice", displayName: "Alice", avatarUrl: null, userRating: 4.5 },
+            { username: "bob", displayName: "Bob", avatarUrl: null, userRating: 3 },
+          ],
+        },
+      ],
+      pagination: { page: 1, pageSize: 10, total: 1, totalPages: 1 },
+    });
+
+    const response = await new ApiService(
+      repository,
+      fakeJobs(),
+      () => now
+    ).getWatchedOverlap(["alice", "bob"], {
+      ...query({ includeMetadata: true }),
+      userRatingMin: 3,
+      ratingMode: "any",
+    });
+
+    expect(response).toMatchObject({
+      data: {
+        films: [
+          {
+            letterboxdSlug: "shared-watch",
+            watchedCount: 2,
+            partySize: 2,
+            watchedBy: [
+              { username: "alice", userRating: 4.5 },
+              { username: "bob", userRating: 3 },
+            ],
+            metadata: { genres: [{ id: 18, name: "Drama" }] },
+          },
+        ],
+      },
+    });
   });
 });
 
@@ -263,7 +359,19 @@ function movie(
     letterboxdPoster: `https://a.ltrbxd.com/${slug}.jpg`,
     letterboxdRating: 4.2,
     letterboxd: stamp,
-    metadata: fresh,
+    metadata: {
+      ...fresh,
+      runtimeMinutes: 120,
+      overview: "Overview",
+      tmdbTitle: "TMDB title",
+      originalTitle: "Original title",
+      originalLanguage: "en",
+      tmdbReleaseDate: new Date("2026-01-02T00:00:00.000Z"),
+      tmdbVoteAverage: 8.1,
+      tmdbPosterPath: "/poster.jpg",
+      tmdbBackdropPath: "/backdrop.jpg",
+      genres: [{ id: 18, name: "Drama" }],
+    },
   };
 }
 
@@ -271,6 +379,8 @@ function list(movies: MovieRecord[], stamp = fresh): UserListRecord {
   return {
     user: user(stamp),
     items: movies.map((entry, position) => ({ position, movie: entry })),
+    total: movies.length,
+    pagination: { page: 1, pageSize: 10, total: movies.length, totalPages: 1 },
   };
 }
 
@@ -286,6 +396,8 @@ function watchedList(
       movie: entry,
       userRating: ratings[position] ?? null,
     })),
+    total: movies.length,
+    pagination: { page: 1, pageSize: 10, total: movies.length, totalPages: 1 },
   };
 }
 
@@ -297,7 +409,29 @@ function fakeRepository(): ApiRepository {
     getNetwork: vi.fn().mockResolvedValue(null),
     getMovieByTmdbId: vi.fn().mockResolvedValue(null),
     getMovieByLetterboxdSlug: vi.fn().mockResolvedValue(null),
-    getWatchlists: vi.fn().mockResolvedValue([]),
+    getUsers: vi.fn().mockResolvedValue([]),
+    getWatchlistOverlap: vi.fn().mockResolvedValue({
+      groups: [],
+      pagination: { page: 1, pageSize: 10, total: 0, totalPages: 1 },
+    }),
+    getWatchedOverlap: vi.fn().mockResolvedValue({
+      groups: [],
+      pagination: { page: 1, pageSize: 10, total: 0, totalPages: 1 },
+    }),
+  };
+}
+
+function query(overrides: Partial<ListQuery> = {}): ListQuery {
+  return {
+    page: 1,
+    pageSize: 10,
+    includeMetadata: false,
+    filters: {
+      genreIds: [],
+      genreNames: [],
+      genreMode: "any",
+    },
+    ...overrides,
   };
 }
 
