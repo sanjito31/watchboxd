@@ -26,11 +26,22 @@ export interface LetterboxdFilmGridResult {
   filmCount: number;
   fetchedAt: Date;
   /**
-   * False when only the pages Letterboxd leaves unchallenged could be read.
-   * Partial snapshots are merged into stored data instead of replacing it.
-   * Omitted means complete.
+   * Set when Letterboxd challenged a later page, so only the pages it leaves
+   * unchallenged could be read. Partial snapshots are merged into stored data
+   * instead of replacing it. Omitted means the scrape read every page.
    */
-  complete?: boolean;
+  partial?: PartialFilmGridScrape;
+}
+
+export interface PartialFilmGridScrape {
+  /** The page Letterboxd challenged; scraping stopped there. */
+  blockedUrl: string;
+  /** Grid pages read before the challenge. */
+  pagesRead: number;
+  /** Films read from those grid pages. */
+  gridFilmCount: number;
+  /** Films read from the diary RSS feed (watched lists only). */
+  diaryFilmCount?: number;
 }
 
 export interface LetterboxdFilmPageData {

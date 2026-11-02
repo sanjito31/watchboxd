@@ -19,12 +19,10 @@ export async function scrapeUserWatched(
   // The /films/ root is sorted by release date, so on its own it cannot show
   // recent watches of older films. The diary RSS feed can, and it is not
   // challenged, so it fills that gap whenever pagination is blocked.
-  const items = grid.complete
-    ? grid.items
-    : mergeRecentFirst(
-        await scrapeRecentWatched(normalized).catch(() => []),
-        grid.items
-      );
+  const recent = grid.partial
+    ? await scrapeRecentWatched(normalized).catch(() => [])
+    : [];
+  const items = grid.partial ? mergeRecentFirst(recent, grid.items) : grid.items;
 
   return {
     username: normalized,
@@ -34,7 +32,10 @@ export async function scrapeUserWatched(
     films: items,
     filmCount: items.length,
     fetchedAt: new Date(),
-    complete: grid.complete,
+    partial: grid.partial && {
+      ...grid.partial,
+      diaryFilmCount: recent.length,
+    },
   };
 }
 

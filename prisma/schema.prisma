@@ -54,6 +54,7 @@ enum ScrapeJobStatus {
   QUEUED    @map("queued")
   RUNNING   @map("running")
   SUCCEEDED @map("succeeded")
+  PARTIAL   @map("partial")
   FAILED    @map("failed")
 }
 

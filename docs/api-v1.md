@@ -35,10 +35,12 @@ Watched-list and watched-overlap requests additionally accept inclusive
 Letterboxd serves a Cloudflare challenge on paginated and sorted user lists
 (for example `/<user>/films/page/2/`), so scrapers detect it and never retry
 it. When later pages are blocked, the first page (and, for watched films, the
-diary RSS feed) is merged into the stored list instead of replacing it. List
-responses then report `complete: false`, and overlap responses name those users
-in `incompleteUsernames`. A job that is blocked outright fails with
-`upstream_blocked`.
+diary RSS feed) is merged into the stored list instead of replacing it. The
+job then finishes with status `partial` and an `upstream_blocked` error whose
+message names the blocked URL and the films merged. List responses report
+`complete: false`, and overlap responses name those users in
+`incompleteUsernames`. A job that is blocked outright (for example on page 1)
+fails with `upstream_blocked`.
 
 Filtering, counts, stable ordering, and pagination are executed in Postgres.
 `includeMetadata` changes only response shape, so metadata and genre filters

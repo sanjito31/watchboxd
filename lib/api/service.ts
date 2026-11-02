@@ -451,7 +451,16 @@ export function toJobSummary(job: StoredJobRecord): ApiJobSummary {
     startedAt: job.startedAt?.toISOString() ?? null,
     finishedAt: job.finishedAt?.toISOString() ?? null,
     error: job.errorCode
-      ? { code: job.errorCode, message: sanitizedJobMessage(job.errorCode) }
+      ? {
+          code: job.errorCode,
+          // Partial-job messages are composed by the worker from the blocked
+          // URL and film counts, so they are safe to show; failure messages
+          // can carry raw upstream or database text and stay generic.
+          message:
+            job.status === "partial" && job.errorMessage
+              ? job.errorMessage
+              : sanitizedJobMessage(job.errorCode),
+        }
       : null,
   };
 }

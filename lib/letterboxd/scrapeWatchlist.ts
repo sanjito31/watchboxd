@@ -11,7 +11,7 @@ export async function scrapeUserWatchlist(
 
   // The watchlist root is sorted by date added, so when later pages are
   // challenged the first page still carries the most recent additions.
-  const [profile, { items, complete }] = await Promise.all([
+  const [profile, { items, partial }] = await Promise.all([
     scrapeProfile(normalized).catch(() => ({}) as ProfileInfo),
     scrapeFilmGridBestEffort(normalized, "watchlist"),
   ]);
@@ -24,6 +24,6 @@ export async function scrapeUserWatchlist(
     films: items,
     filmCount: items.length,
     fetchedAt: new Date(),
-    complete,
+    partial,
   };
 }

@@ -9,7 +9,11 @@ import {
   hasNextFilmGridPage,
   parseFilmGridHtml,
 } from "./parseFilmGridPage";
-import type { FilmGridKind, LetterboxdFilmGridItem } from "./types";
+import type {
+  FilmGridKind,
+  LetterboxdFilmGridItem,
+  PartialFilmGridScrape,
+} from "./types";
 
 export interface FilmGridScrapeOptions {
   fetchPage?: (url: string) => Promise<string>;
@@ -20,8 +24,8 @@ export interface FilmGridScrapeOptions {
 
 export interface FilmGridScrapeResult {
   items: LetterboxdFilmGridItem[];
-  /** False when Letterboxd challenged a later page and only earlier pages were read. */
-  complete: boolean;
+  /** Set when Letterboxd challenged a later page and only earlier pages were read. */
+  partial?: PartialFilmGridScrape;
 }
 
 export function buildFilmGridPageUrl(
@@ -48,7 +52,7 @@ export async function scrapeFilmGrid(
 
 /**
  * Like scrapeFilmGrid, but when Letterboxd serves a Cloudflare challenge on
- * page 2 or later, returns the pages already read with `complete: false`
+ * page 2 or later, returns the pages already read with `partial` details
  * instead of failing. A challenge on page 1 still throws.
  */
 export async function scrapeFilmGridBestEffort(
@@ -74,12 +78,20 @@ async function collectFilmGrid(
   const seen = new Set<string>();
 
   for (let page = 1; page <= maxPages; page++) {
+    const url = buildFilmGridPageUrl(normalized, kind, page);
     let html: string;
     try {
-      html = await fetchPage(buildFilmGridPageUrl(normalized, kind, page));
+      html = await fetchPage(url);
     } catch (error) {
       if (stopWhenBlocked && page > 1 && isProviderBlockedError(error)) {
-        return { items, complete: false };
+        return {
+          items,
+          partial: {
+            blockedUrl: url,
+            pagesRead: page - 1,
+            gridFilmCount: items.length,
+          },
+        };
       }
       throw error;
     }
@@ -105,7 +117,7 @@ async function collectFilmGrid(
     await wait(pageDelayMs);
   }
 
-  return { items, complete: true };
+  return { items };
 }
 
 function watchedIdentity(item: LetterboxdFilmGridItem): string {

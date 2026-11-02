@@ -20,10 +20,15 @@ export const JOB_TYPES = [
 ] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 
+/**
+ * `partial` is terminal like `succeeded`: data was saved, but Letterboxd
+ * blocked part of the scrape. Its `error` explains what was left out.
+ */
 export const JOB_STATUSES = [
   "queued",
   "running",
   "succeeded",
+  "partial",
   "failed",
 ] as const;
 export type JobStatus = (typeof JOB_STATUSES)[number];

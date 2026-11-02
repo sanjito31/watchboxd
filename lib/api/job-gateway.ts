@@ -49,5 +49,6 @@ function mapJob(job: JobRecord): StoredJobRecord {
     startedAt: job.startedAt,
     finishedAt: job.finishedAt,
     errorCode: job.error?.code ?? null,
+    errorMessage: job.error?.message ?? null,
   };
 }

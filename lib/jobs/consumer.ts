@@ -55,7 +55,12 @@ export async function processScrapeQueueMessage(
   }
 
   const existing = await getJobById(message.jobId, prisma);
-  if (!existing || existing.status === "succeeded" || existing.status === "failed") {
+  if (
+    !existing ||
+    existing.status === "succeeded" ||
+    existing.status === "partial" ||
+    existing.status === "failed"
+  ) {
     return;
   }
 
@@ -85,13 +90,21 @@ export async function processScrapeQueueMessage(
       const persistedChildren = await prepared.persist(transaction);
       const completed = await transaction.scrapeJob.updateMany({
         where: { id: job.id, status: "RUNNING" },
-        data: {
-          status: "SUCCEEDED",
-          errorCode: null,
-          errorMessage: null,
-          finishedAt: now,
-          updatedAt: now,
-        },
+        data: prepared.partial
+          ? {
+              status: "PARTIAL",
+              errorCode: databaseEnum(prepared.partial.code),
+              errorMessage: prepared.partial.message,
+              finishedAt: now,
+              updatedAt: now,
+            }
+          : {
+              status: "SUCCEEDED",
+              errorCode: null,
+              errorMessage: null,
+              finishedAt: now,
+              updatedAt: now,
+            },
       });
       if (completed.count !== 1) {
         throw new Error("Scrape job lost its running lease");
@@ -235,3 +248,7 @@ async function resolvePrisma(client?: ConsumerPrisma): Promise<ConsumerPrisma> {
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function databaseEnum<T extends string>(value: T): Uppercase<T> {
+  return value.toUpperCase() as Uppercase<T>;
+}

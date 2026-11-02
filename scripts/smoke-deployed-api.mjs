@@ -115,6 +115,11 @@ async function pollJob(baseUrl, initialJob, deadline) {
     }
 
     if (job.status === "succeeded") return;
+    if (job.status === "partial") {
+      const detail = job.error ? `${job.error.code}: ${job.error.message}` : "";
+      console.warn(`  ${job.id}: saved partial data. ${detail}`.trimEnd());
+      return;
+    }
     if (job.status === "failed") {
       const detail = job.error
         ? `${job.error.code}: ${job.error.message}`

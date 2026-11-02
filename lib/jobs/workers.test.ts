@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { LetterboxdFilmGridItem } from "@/lib/letterboxd";
 import {
+  describePartialFilmGrid,
   persistFilmGridSnapshot,
   persistMovieMetadataSnapshot,
   persistMovieSnapshot,
@@ -93,7 +94,14 @@ describe("film-grid persistence", () => {
 
   it("merges partial snapshots instead of replacing stored items", async () => {
     const transaction = transactionMock();
-    const data = { ...snapshot(), complete: false };
+    const data = {
+      ...snapshot(),
+      partial: {
+        blockedUrl: "https://letterboxd.com/alice/films/page/2/",
+        pagesRead: 1,
+        gridFilmCount: 1,
+      },
+    };
     data.items[0]!.userRating = 4;
 
     await persistFilmGridSnapshot(transaction as never, data, "watched", {
@@ -147,6 +155,30 @@ describe("film-grid persistence", () => {
     expect(jobs).toEqual([]);
     expect(transaction.scrapeJob.createMany).not.toHaveBeenCalled();
     expect(transaction.scrapeJob.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("partial film-grid description", () => {
+  it("is undefined for complete snapshots", () => {
+    expect(describePartialFilmGrid(snapshot(), "watchlist")).toBeUndefined();
+  });
+
+  it("names the blocked URL and where the merged films came from", () => {
+    const data = {
+      ...snapshot(),
+      partial: {
+        blockedUrl: "https://letterboxd.com/alice/films/page/2/",
+        pagesRead: 1,
+        gridFilmCount: 72,
+        diaryFilmCount: 50,
+      },
+    };
+
+    expect(describePartialFilmGrid(data, "watched list")).toBe(
+      "Letterboxd challenged https://letterboxd.com/alice/films/page/2/; " +
+        "merged 1 film (72 from 1 page and 50 from the diary feed) into the " +
+        "stored watched list. Older entries were left as they were."
+    );
   });
 });
 
