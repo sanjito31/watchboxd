@@ -29,4 +29,34 @@ describe("fetchHtml", () => {
     await rejection;
     expect(fetcher).toHaveBeenCalledTimes(3);
   });
+
+  it("fails once without retrying when Cloudflare serves a challenge", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response("<html></html>", {
+        status: 403,
+        headers: { "cf-mitigated": "challenge" },
+      })
+    );
+    vi.stubGlobal("fetch", fetcher);
+
+    await expect(
+      fetchHtml("https://letterboxd.com/alice/films/page/2/")
+    ).rejects.toMatchObject({
+      kind: "blocked",
+      status: 403,
+    } satisfies Partial<ProviderError>);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("recognizes a challenge page body without the mitigation header", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response("<title>Just a moment...</title>", { status: 403 })
+    );
+    vi.stubGlobal("fetch", fetcher);
+
+    await expect(
+      fetchHtml("https://letterboxd.com/alice/films/page/2/")
+    ).rejects.toMatchObject({ kind: "blocked" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
 });

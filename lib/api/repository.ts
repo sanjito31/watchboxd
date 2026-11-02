@@ -439,14 +439,24 @@ function mapUser(user: {
   watchlistStaleAt: Date | null;
   watchedFetchedAt: Date | null;
   watchedStaleAt: Date | null;
+  watchlistComplete: boolean;
+  watchedComplete: boolean;
   networkFetchedAt: Date | null;
   networkStaleAt: Date | null;
 }): UserRecord {
   return {
     ...profile(user),
     profile: { fetchedAt: user.profileFetchedAt, staleAt: user.profileStaleAt },
-    watchlist: { fetchedAt: user.watchlistFetchedAt, staleAt: user.watchlistStaleAt },
-    watched: { fetchedAt: user.watchedFetchedAt, staleAt: user.watchedStaleAt },
+    watchlist: {
+      fetchedAt: user.watchlistFetchedAt,
+      staleAt: user.watchlistStaleAt,
+      complete: user.watchlistComplete,
+    },
+    watched: {
+      fetchedAt: user.watchedFetchedAt,
+      staleAt: user.watchedStaleAt,
+      complete: user.watchedComplete,
+    },
     network: { fetchedAt: user.networkFetchedAt, staleAt: user.networkStaleAt },
   };
 }

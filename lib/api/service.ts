@@ -167,6 +167,9 @@ export class ApiService {
     const page = await this.repository.getWatchlistOverlap(usernames, query);
     const data: OverlapDto = {
       users: profiles,
+      incompleteUsernames: orderedUsers
+        .filter((user) => !user.watchlist.complete)
+        .map((user) => user.username),
       films: page.groups.map((group) =>
         toOverlapFilm(group, profiles.length, query.includeMetadata)
       ),
@@ -212,6 +215,9 @@ export class ApiService {
     const page = await this.repository.getWatchedOverlap(usernames, query);
     const data: WatchedOverlapDto = {
       users: orderedUsers.map(toProfileSummary),
+      incompleteUsernames: orderedUsers
+        .filter((user) => !user.watched.complete)
+        .map((user) => user.username),
       films: page.groups.map((group) =>
         toWatchedOverlapFilm(group, orderedUsers.length, query.includeMetadata)
       ),
@@ -261,6 +267,7 @@ export class ApiService {
       user: ProfileSummaryDto;
       items: TDto[];
       filmCount: number;
+      complete: boolean;
       pagination: PaginationMeta;
     }>
   > {
@@ -272,6 +279,7 @@ export class ApiService {
       user: toProfileSummary(list.user),
       items: list.items.map(mapItem),
       filmCount: list.total,
+      complete: listStamp.complete,
       pagination: list.pagination,
     };
     const refreshJobs = await this.refreshStaleResources([
@@ -407,6 +415,14 @@ function failedJobResponse(job: StoredJobRecord): ApiErrorResponse {
       },
     };
   }
+  if (job.errorCode === "upstream_blocked") {
+    return {
+      error: {
+        code: "upstream_unavailable",
+        message: "Letterboxd is blocking automated access to this page",
+      },
+    };
+  }
   if (job.errorCode === "upstream_unavailable" || job.errorCode === "timeout") {
     return {
       error: {
@@ -445,6 +461,7 @@ function sanitizedJobMessage(code: JobFailureCode): string {
     invalid_input: "The job input was invalid",
     not_found: "The requested resource was not found",
     upstream_unavailable: "The upstream service was unavailable",
+    upstream_blocked: "Letterboxd blocked automated access to this page",
     rate_limited: "The upstream service rate limited the request",
     timeout: "The upstream request timed out",
     parse_error: "The upstream response could not be processed",

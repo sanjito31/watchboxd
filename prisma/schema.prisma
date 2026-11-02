@@ -61,6 +61,7 @@ enum ScrapeJobFailureCode {
   INVALID_INPUT        @map("invalid_input")
   NOT_FOUND            @map("not_found")
   UPSTREAM_UNAVAILABLE @map("upstream_unavailable")
+  UPSTREAM_BLOCKED     @map("upstream_blocked")
   RATE_LIMITED         @map("rate_limited")
   TIMEOUT              @map("timeout")
   PARSE_ERROR          @map("parse_error")
@@ -80,6 +81,10 @@ model LetterboxdUser {
   watchlistStaleAt   DateTime? @db.Timestamptz(3)
   watchedFetchedAt   DateTime? @db.Timestamptz(3)
   watchedStaleAt     DateTime? @db.Timestamptz(3)
+  // False when the last refresh could only read the pages Letterboxd leaves
+  // unchallenged, so stored items were merged rather than replaced.
+  watchlistComplete  Boolean   @default(true)
+  watchedComplete    Boolean   @default(true)
   networkFetchedAt   DateTime? @db.Timestamptz(3)
   networkStaleAt     DateTime? @db.Timestamptz(3)
 

@@ -8,7 +8,7 @@ vi.mock("./fetchHtml", () => ({
   fetchHtml: mocks.fetchHtml,
 }));
 
-import { ProviderError } from "./providerErrors";
+import { ProviderBlockedError, ProviderError } from "./providerErrors";
 import { parseProfileHtml, scrapeProfile } from "./scrapeProfile";
 
 describe("scrapeProfile", () => {
@@ -39,9 +39,8 @@ describe("scrapeProfile", () => {
   it("falls back to the following page when the profile root is challenged", async () => {
     mocks.fetchHtml
       .mockRejectedValueOnce(
-        new ProviderError(
-          "Letterboxd request failed with HTTP 403",
-          "upstream_unavailable",
+        new ProviderBlockedError(
+          "Letterboxd served a Cloudflare challenge",
           { status: 403 }
         )
       )

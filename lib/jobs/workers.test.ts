@@ -91,6 +91,50 @@ describe("film-grid persistence", () => {
     });
   });
 
+  it("merges partial snapshots instead of replacing stored items", async () => {
+    const transaction = transactionMock();
+    const data = { ...snapshot(), complete: false };
+    data.items[0]!.userRating = 4;
+
+    await persistFilmGridSnapshot(transaction as never, data, "watched", {
+      environment: "development",
+    });
+
+    expect(transaction.watchedItem.deleteMany).not.toHaveBeenCalled();
+    expect(transaction.watchedItem.createMany).not.toHaveBeenCalled();
+    expect(transaction.letterboxdUser.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({ watchedComplete: false }),
+      })
+    );
+    const [, upsert, renumber] = transaction.$executeRaw.mock.calls.map(
+      ([query]) => query as { sql: string; values: unknown[] }
+    );
+    expect(upsert!.sql).toContain('INSERT INTO "WatchedItem"');
+    expect(upsert!.sql).toContain("ON CONFLICT");
+    expect(
+      JSON.parse(
+        upsert!.values.find((value): value is string => typeof value === "string")!
+      )
+    ).toEqual([{ movieId: "10", position: -1, userRating: 4 }]);
+    expect(renumber!.sql).toContain("ROW_NUMBER()");
+  });
+
+  it("marks full snapshots complete", async () => {
+    const transaction = transactionMock();
+
+    await persistFilmGridSnapshot(transaction as never, snapshot(), "watchlist", {
+      environment: "development",
+    });
+
+    expect(transaction.letterboxdUser.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({ watchlistComplete: true }),
+      })
+    );
+    expect(transaction.watchlistItem.deleteMany).toHaveBeenCalled();
+  });
+
   it("can persist a local import without creating child movie jobs", async () => {
     const transaction = transactionMock();
     const jobs = await persistFilmGridSnapshot(

@@ -25,6 +25,12 @@ export interface LetterboxdFilmGridResult {
   films: LetterboxdFilmGridItem[];
   filmCount: number;
   fetchedAt: Date;
+  /**
+   * False when only the pages Letterboxd leaves unchallenged could be read.
+   * Partial snapshots are merged into stored data instead of replacing it.
+   * Omitted means complete.
+   */
+  complete?: boolean;
 }
 
 export interface LetterboxdFilmPageData {

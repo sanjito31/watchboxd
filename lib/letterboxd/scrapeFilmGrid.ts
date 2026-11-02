@@ -4,6 +4,7 @@ import {
   PAGE_DELAY_MS,
 } from "./constants";
 import { fetchHtml } from "./fetchHtml";
+import { isProviderBlockedError } from "./providerErrors";
 import {
   hasNextFilmGridPage,
   parseFilmGridHtml,
@@ -15,6 +16,12 @@ export interface FilmGridScrapeOptions {
   maxPages?: number;
   pageDelayMs?: number;
   sleep?: (ms: number) => Promise<void>;
+}
+
+export interface FilmGridScrapeResult {
+  items: LetterboxdFilmGridItem[];
+  /** False when Letterboxd challenged a later page and only earlier pages were read. */
+  complete: boolean;
 }
 
 export function buildFilmGridPageUrl(
@@ -36,6 +43,28 @@ export async function scrapeFilmGrid(
   kind: FilmGridKind,
   options: FilmGridScrapeOptions = {}
 ): Promise<LetterboxdFilmGridItem[]> {
+  return (await collectFilmGrid(username, kind, options, false)).items;
+}
+
+/**
+ * Like scrapeFilmGrid, but when Letterboxd serves a Cloudflare challenge on
+ * page 2 or later, returns the pages already read with `complete: false`
+ * instead of failing. A challenge on page 1 still throws.
+ */
+export async function scrapeFilmGridBestEffort(
+  username: string,
+  kind: FilmGridKind,
+  options: FilmGridScrapeOptions = {}
+): Promise<FilmGridScrapeResult> {
+  return collectFilmGrid(username, kind, options, true);
+}
+
+async function collectFilmGrid(
+  username: string,
+  kind: FilmGridKind,
+  options: FilmGridScrapeOptions,
+  stopWhenBlocked: boolean
+): Promise<FilmGridScrapeResult> {
   const normalized = username.toLowerCase();
   const fetchPage = options.fetchPage ?? fetchHtml;
   const maxPages = options.maxPages ?? MAX_PAGES;
@@ -45,7 +74,15 @@ export async function scrapeFilmGrid(
   const seen = new Set<string>();
 
   for (let page = 1; page <= maxPages; page++) {
-    const html = await fetchPage(buildFilmGridPageUrl(normalized, kind, page));
+    let html: string;
+    try {
+      html = await fetchPage(buildFilmGridPageUrl(normalized, kind, page));
+    } catch (error) {
+      if (stopWhenBlocked && page > 1 && isProviderBlockedError(error)) {
+        return { items, complete: false };
+      }
+      throw error;
+    }
 
     const pageItems = parseFilmGridHtml(html);
     if (pageItems.length === 0) {
@@ -68,7 +105,7 @@ export async function scrapeFilmGrid(
     await wait(pageDelayMs);
   }
 
-  return items;
+  return { items, complete: true };
 }
 
 function watchedIdentity(item: LetterboxdFilmGridItem): string {

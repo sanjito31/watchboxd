@@ -155,6 +155,11 @@ export interface WatchlistDto {
   user: ProfileSummaryDto;
   items: ListItemDto[];
   filmCount: number;
+  /**
+   * False when Letterboxd blocked pagination on the last refresh, so only the
+   * most recent films were merged in and older or removed films may be stale.
+   */
+  complete: boolean;
   pagination: PaginationMeta;
 }
 
@@ -162,6 +167,8 @@ export interface WatchedDto {
   user: ProfileSummaryDto;
   items: WatchedListItemDto[];
   filmCount: number;
+  /** See WatchlistDto.complete. */
+  complete: boolean;
   pagination: PaginationMeta;
 }
 
@@ -183,6 +190,8 @@ export interface OverlapFilmDto extends MovieDto {
 
 export interface OverlapDto {
   users: ProfileSummaryDto[];
+  /** Users whose stored watchlist is partial (see WatchlistDto.complete). */
+  incompleteUsernames: string[];
   films: OverlapFilmDto[];
   pagination: PaginationMeta;
 }
@@ -199,6 +208,8 @@ export interface WatchedOverlapFilmDto extends MovieDto {
 
 export interface WatchedOverlapDto {
   users: ProfileSummaryDto[];
+  /** Users whose stored watched list is partial (see WatchedDto.complete). */
+  incompleteUsernames: string[];
   films: WatchedOverlapFilmDto[];
   pagination: PaginationMeta;
 }

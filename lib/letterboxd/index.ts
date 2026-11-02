@@ -2,6 +2,7 @@ export * from "./buildPosterUrl";
 export * from "./fetchHtml";
 export * from "./parseFilmGridPage";
 export * from "./parseFilmPage";
+export * from "./parseRssFeed";
 export * from "./parseUsername";
 export * from "./providerErrors";
 export * from "./resolveTmdbMovie";

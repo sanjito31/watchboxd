@@ -16,13 +16,18 @@ export interface CacheStamp {
   staleAt: Date | null;
 }
 
+export interface FilmListStamp extends CacheStamp {
+  /** False when the last refresh only read the pages Letterboxd leaves unchallenged. */
+  complete: boolean;
+}
+
 export interface UserRecord {
   username: string;
   displayName: string | null;
   avatarUrl: string | null;
   profile: CacheStamp;
-  watchlist: CacheStamp;
-  watched: CacheStamp;
+  watchlist: FilmListStamp;
+  watched: FilmListStamp;
   network: CacheStamp;
 }
 
