@@ -1,5 +1,8 @@
 # API v1 movie lists and overlaps
 
+For the complete consumer contract covering every endpoint, response envelope,
+DTO, polling flow, and error code, see [Watchboxd API v1 reference](api-reference.md).
+
 Direct movie endpoints return the complete `FullMovieDto`. Its `metadata` property
 is either the stored TMDB snapshot (including `genres`, `tmdbFetchedAt`, and
 `tmdbStaleAt`) or `null`. Missing or stale metadata is returned immediately and

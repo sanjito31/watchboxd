@@ -152,8 +152,9 @@ for child movie jobs. Page-scoped `meta.enrichment` reports `complete`,
 inspect per-movie jobs; individual movie routes handle movie freshness and
 TMDB metadata refresh. Add `includeMetadata=true` to list or overlap requests
 to include the nested metadata object and genres. Metadata filters work whether
-or not response metadata is included. See [`docs/api-v1.md`](docs/api-v1.md)
-for the shared filter contract and examples.
+or not response metadata is included. See the complete
+[`docs/api-reference.md`](docs/api-reference.md) consumer contract or the
+shorter [`docs/api-v1.md`](docs/api-v1.md) list-filter guide.
 
 To force a watched-list refresh before its cache becomes stale, configure the
 server-only `MANUAL_JOB_API_KEY` environment variable and submit a job:
