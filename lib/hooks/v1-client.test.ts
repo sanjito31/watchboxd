@@ -72,6 +72,32 @@ describe("fetchV1Resource", () => {
     expect(result.data.value).toBe(42);
   });
 
+  it("treats a partial job as finished and reloads the resource", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({ data: null, meta: { cache: "miss", jobs: [queuedJob] } }, 202)
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          data: {
+            ...queuedJob,
+            status: "partial",
+            error: { code: "upstream_blocked", message: "blocked page 2" },
+          },
+        })
+      )
+      .mockResolvedValueOnce(jsonResponse({ data: { value: 7 }, meta }));
+
+    const result = await fetchV1Resource<{ value: number }>("/api/v1/resource", {
+      fetcher,
+      sleep: async () => undefined,
+    });
+
+    expect(result.data.value).toBe(7);
+    expect(fetcher).toHaveBeenCalledTimes(3);
+  });
+
   it("uses capped exponential polling when no Retry-After is sent", async () => {
     const statuses = [
       "running",

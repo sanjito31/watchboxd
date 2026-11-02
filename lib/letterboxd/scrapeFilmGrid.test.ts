@@ -205,7 +205,11 @@ describe("scrapeFilmGrid", () => {
         sleep: async () => undefined,
       })
     ).resolves.toMatchObject({
-      complete: false,
+      partial: {
+        blockedUrl: "https://letterboxd.com/alice/films/page/2/",
+        pagesRead: 1,
+        gridFilmCount: 1,
+      },
       items: [{ sourceSlug: "one", position: 0 }],
     });
     expect(fetchPage).toHaveBeenCalledTimes(2);

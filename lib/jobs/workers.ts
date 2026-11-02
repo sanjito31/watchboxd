@@ -29,8 +29,10 @@ import {
   parseCanonicalResourceKey,
   PermanentJobError,
   type JobEnvironment,
+  type JobFailure,
   type JobType,
 } from "./contracts";
+import { sanitizeJobFailure } from "./errors";
 import { fromDatabaseJob, type JobRecord } from "./repository";
 
 export type PersistenceTransaction = Prisma.TransactionClient;
@@ -50,6 +52,11 @@ export interface SnapshotJobWorker<TSnapshot> {
       fetchedAt: Date;
     }
   ): Promise<JobRecord[] | void>;
+  /**
+   * Explains why a fetched snapshot is incomplete, or returns undefined when
+   * it is complete. Partial snapshots finish with the `partial` job status.
+   */
+  describePartial?(snapshot: TSnapshot): string | undefined;
 }
 
 export interface JobWorkerRegistry {
@@ -63,6 +70,8 @@ export interface JobWorkerRegistry {
 
 export interface PreparedJobSnapshot {
   persist(transaction: PersistenceTransaction): Promise<JobRecord[] | void>;
+  /** Set when the snapshot is incomplete; see SnapshotJobWorker.describePartial. */
+  partial?: JobFailure;
 }
 
 export async function prepareJobSnapshot(
@@ -79,7 +88,12 @@ export async function prepareJobSnapshot(
   const worker = workerForType(registry, job.type);
   const snapshot = await worker.fetch(parsed.identifier);
   const fetchedAt = new Date();
+  const partialMessage = worker.describePartial?.(snapshot);
   return {
+    partial:
+      partialMessage === undefined
+        ? undefined
+        : sanitizeJobFailure("upstream_blocked", partialMessage),
     persist: (transaction) =>
       worker.persist(transaction, snapshot, {
         identifier: parsed.identifier,
@@ -96,11 +110,15 @@ export function createDefaultWorkerRegistry(): JobWorkerRegistry {
       fetch: scrapeUserWatchlist,
       persist: (transaction, snapshot, context) =>
         persistFilmGridSnapshot(transaction, snapshot, "watchlist", context),
+      describePartial: (snapshot) =>
+        describePartialFilmGrid(snapshot, "watchlist"),
     },
     watched: {
       fetch: scrapeUserWatched,
       persist: (transaction, snapshot, context) =>
         persistFilmGridSnapshot(transaction, snapshot, "watched", context),
+      describePartial: (snapshot) =>
+        describePartialFilmGrid(snapshot, "watched list"),
     },
     network: { fetch: scrapeMemberNetwork, persist: persistNetworkSnapshot },
     movie: { fetch: fetchMovieSnapshot, persist: persistMovieSnapshot },
@@ -191,6 +209,29 @@ async function persistProfileSnapshot(
   return [];
 }
 
+export function describePartialFilmGrid(
+  snapshot: LetterboxdFilmGridResult,
+  listName: string
+): string | undefined {
+  const { partial } = snapshot;
+  if (!partial) return undefined;
+
+  const pages = count(partial.pagesRead, "page");
+  const sources =
+    partial.diaryFilmCount === undefined
+      ? `${partial.gridFilmCount} from ${pages}`
+      : `${partial.gridFilmCount} from ${pages} and ${partial.diaryFilmCount} from the diary feed`;
+  return (
+    `Letterboxd challenged ${partial.blockedUrl}; merged ` +
+    `${count(snapshot.items.length, "film")} (${sources}) into the stored ` +
+    `${listName}. Older entries were left as they were.`
+  );
+}
+
+function count(value: number, noun: string): string {
+  return `${value} ${noun}${value === 1 ? "" : "s"}`;
+}
+
 export async function persistFilmGridSnapshot(
   transaction: PersistenceTransaction,
   snapshot: LetterboxdFilmGridResult,
@@ -204,7 +245,7 @@ export async function persistFilmGridSnapshot(
   }
 
   const fetchedAt = snapshot.fetchedAt;
-  const complete = snapshot.complete ?? true;
+  const complete = snapshot.partial === undefined;
   const freshness =
     kind === "watchlist"
       ? {

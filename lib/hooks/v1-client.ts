@@ -356,6 +356,7 @@ function isJobSummary(value: unknown): value is ApiJobSummary {
     (value.status === "queued" ||
       value.status === "running" ||
       value.status === "succeeded" ||
+      value.status === "partial" ||
       value.status === "failed")
   );
 }

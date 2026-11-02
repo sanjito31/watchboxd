@@ -44,6 +44,46 @@ describe("queue consumer", () => {
     expect(state.attempts).toBe(1);
   });
 
+  it("records a partial outcome with the worker's explanation", async () => {
+    const state = databaseJob();
+    const prisma = fakePrisma(state);
+    const workers = {
+      profile: {
+        fetch: async () => ({}),
+        persist: async () => undefined,
+        describePartial: () => "Letterboxd challenged page 2; merged 72 films",
+      },
+    } as unknown as JobWorkerRegistry;
+
+    await processScrapeQueueMessage(
+      payload,
+      { deliveryCount: 1, topicName: "scrape-jobs-v1" },
+      { prisma, workers }
+    );
+
+    expect(state).toMatchObject({
+      status: "PARTIAL",
+      errorCode: "UPSTREAM_BLOCKED",
+      errorMessage: "Letterboxd challenged page 2; merged 72 films",
+      attempts: 1,
+    });
+  });
+
+  it("skips redeliveries of partial jobs", async () => {
+    const state = databaseJob({ status: "PARTIAL" });
+    const prisma = fakePrisma(state);
+    const fetch = vi.fn();
+
+    await processScrapeQueueMessage(
+      payload,
+      { deliveryCount: 2, topicName: "scrape-jobs-v1" },
+      { prisma, workers: profileWorkers({ fetch, persist: async () => undefined }) }
+    );
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(state.status).toBe("PARTIAL");
+  });
+
   it("publishes durable child jobs only after the parent transaction commits", async () => {
     const events: string[] = [];
     const state = databaseJob();

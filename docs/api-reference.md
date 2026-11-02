@@ -282,7 +282,7 @@ type JobType =
   | "movie"
   | "movie_metadata"
 
-type JobStatus = "queued" | "running" | "succeeded" | "failed"
+type JobStatus = "queued" | "running" | "succeeded" | "partial" | "failed"
 
 type JobFailureCode =
   | "invalid_input"
@@ -857,8 +857,21 @@ Unlike resource endpoints, this response does not contain cache metadata.
 }
 ```
 
-Stop polling when `status` becomes `succeeded` or `failed`. A failed job has a
-non-null `error` containing a `JobFailureCode` and sanitized message.
+Stop polling when `status` becomes `succeeded`, `partial`, or `failed`. A failed
+job has a non-null `error` containing a `JobFailureCode` and sanitized message.
+
+`partial` means the job saved data but Letterboxd blocked part of the scrape,
+for example a Cloudflare challenge on `/<user>/films/page/2/`. Treat it as
+finished: the resource now returns `200` with `complete: false`. Its `error`
+has code `upstream_blocked` and a message naming the blocked URL and how many
+films were merged, for example:
+
+```json
+{
+  "code": "upstream_blocked",
+  "message": "Letterboxd challenged https://letterboxd.com/alice/films/page/2/; merged 115 films (72 from 1 page and 50 from the diary feed) into the stored watched list. Older entries were left as they were."
+}
+```
 
 ### Manually request a job
 
@@ -969,7 +982,7 @@ async function pollJob(
     if (!response.ok) {
       throw new Error(body.error?.message ?? `Job HTTP ${response.status}`)
     }
-    if (body.data.status === "succeeded") return
+    if (body.data.status === "succeeded" || body.data.status === "partial") return
     if (body.data.status === "failed") {
       throw new Error(
         `${body.data.error?.code ?? "unknown"}: ${

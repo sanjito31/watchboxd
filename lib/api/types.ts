@@ -151,6 +151,8 @@ export interface StoredJobRecord {
   startedAt: Date | null;
   finishedAt: Date | null;
   errorCode: JobFailureCode | null;
+  /** Stored detail; only exposed for `partial` jobs, whose message we compose. */
+  errorMessage: string | null;
 }
 
 export interface ApiRepository {

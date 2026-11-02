@@ -473,6 +473,36 @@ function fakeJobs(): JobGateway & { ensureJob: ReturnType<typeof vi.fn> } {
   };
 }
 
+describe("ApiService job summaries", () => {
+  it("shows the worker's explanation for partial jobs only", async () => {
+    const jobs = fakeJobs();
+    const partial = {
+      ...job("watched", "alice", 1),
+      status: "partial" as const,
+      errorCode: "upstream_blocked" as const,
+      errorMessage: "Letterboxd challenged https://letterboxd.com/alice/films/page/2/",
+    };
+    const failed = {
+      ...job("watched", "alice", 2),
+      status: "failed" as const,
+      errorCode: "unknown" as const,
+      errorMessage: "postgres internals",
+    };
+    jobs.getJob = vi.fn(async (id: string) => (id === partial.id ? partial : failed));
+    const service = new ApiService(fakeRepository(), jobs, () => now);
+
+    await expect(service.getJob(partial.id)).resolves.toMatchObject({
+      data: {
+        status: "partial",
+        error: { code: "upstream_blocked", message: partial.errorMessage },
+      },
+    });
+    await expect(service.getJob(failed.id)).resolves.toMatchObject({
+      data: { status: "failed", error: { code: "unknown", message: "The job failed" } },
+    });
+  });
+});
+
 function job(
   type: StoredJobRecord["type"],
   identifier: string,
@@ -488,5 +518,6 @@ function job(
     startedAt: null,
     finishedAt: null,
     errorCode: null,
+    errorMessage: null,
   };
 }

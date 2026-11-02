@@ -116,7 +116,15 @@ describe.skipIf(!databaseUrl)("Letterboxd cache database integration", () => {
             films: items,
             filmCount: items.length,
             fetchedAt: new Date(),
-            complete,
+            ...(complete
+              ? {}
+              : {
+                  partial: {
+                    blockedUrl: `https://letterboxd.com/${identifier}/films/page/2/`,
+                    pagesRead: 1,
+                    gridFilmCount: items.length,
+                  },
+                }),
           },
           "watched",
           { environment: "development", createMovieJobs: false }

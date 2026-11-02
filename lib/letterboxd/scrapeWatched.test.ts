@@ -41,7 +41,12 @@ describe("scrapeUserWatched", () => {
   it("merges recent diary entries ahead of the first grid page when pagination is challenged", async () => {
     const result = await scrapeUserWatched("Alice");
 
-    expect(result.complete).toBe(false);
+    expect(result.partial).toEqual({
+      blockedUrl: "https://letterboxd.com/alice/films/page/2/",
+      pagesRead: 1,
+      gridFilmCount: 2,
+      diaryFilmCount: 2,
+    });
     expect(
       result.items.map(({ position, sourceSlug, letterboxdFilmId, userRating }) => [
         position,
@@ -67,7 +72,7 @@ describe("scrapeUserWatched", () => {
 
     const result = await scrapeUserWatched("alice");
 
-    expect(result.complete).toBe(false);
+    expect(result.partial).toMatchObject({ diaryFilmCount: 0 });
     expect(result.items.map(({ sourceSlug }) => sourceSlug)).toEqual([
       "clayface",
       "older",
