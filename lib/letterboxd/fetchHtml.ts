@@ -3,7 +3,11 @@ import {
   FETCH_TIMEOUT_MS,
   USER_AGENT,
 } from "./constants";
-import { ProviderError, ProviderNotFoundError } from "./providerErrors";
+import {
+  ProviderBlockedError,
+  ProviderError,
+  ProviderNotFoundError,
+} from "./providerErrors";
 
 export interface FetchedHtmlPage {
   html: string;
@@ -37,6 +41,13 @@ export async function fetchHtmlPage(url: string): Promise<FetchedHtmlPage> {
         throw new LetterboxdNotFoundError(url);
       }
 
+      if (res.status === 403 && (await isCloudflareChallenge(res))) {
+        throw new ProviderBlockedError(
+          `Letterboxd served a Cloudflare challenge for ${url}`,
+          { status: 403 }
+        );
+      }
+
       if (!res.ok) {
         throw new ProviderError(
           `Letterboxd request failed with HTTP ${res.status}`,
@@ -55,7 +66,12 @@ export async function fetchHtmlPage(url: string): Promise<FetchedHtmlPage> {
         url: res.url || url,
       };
     } catch (err) {
-      if (err instanceof LetterboxdNotFoundError) throw err;
+      if (
+        err instanceof LetterboxdNotFoundError ||
+        err instanceof ProviderBlockedError
+      ) {
+        throw err;
+      }
       lastError =
         err instanceof ProviderError
           ? err
@@ -87,6 +103,14 @@ export class LetterboxdNotFoundError extends ProviderNotFoundError {
     super(`Not found: ${url}`, { status: 404 });
     this.name = "LetterboxdNotFoundError";
   }
+}
+
+async function isCloudflareChallenge(res: Response): Promise<boolean> {
+  if (res.headers.get("cf-mitigated")?.toLowerCase() === "challenge") {
+    return true;
+  }
+  const body = await res.text().catch(() => "");
+  return /challenge-platform|<title>Just a moment/i.test(body);
 }
 
 function sleep(ms: number): Promise<void> {

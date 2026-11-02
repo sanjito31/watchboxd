@@ -1,4 +1,4 @@
-import { scrapeFilmGrid } from "./scrapeFilmGrid";
+import { scrapeFilmGridBestEffort } from "./scrapeFilmGrid";
 import { scrapeProfile, type ProfileInfo } from "./scrapeProfile";
 import type { LetterboxdFilmGridResult } from "./types";
 
@@ -9,9 +9,11 @@ export async function scrapeUserWatchlist(
 ): Promise<ScrapeResult> {
   const normalized = username.toLowerCase();
 
-  const [profile, items] = await Promise.all([
+  // The watchlist root is sorted by date added, so when later pages are
+  // challenged the first page still carries the most recent additions.
+  const [profile, { items, complete }] = await Promise.all([
     scrapeProfile(normalized).catch(() => ({}) as ProfileInfo),
-    scrapeFilmGrid(normalized, "watchlist"),
+    scrapeFilmGridBestEffort(normalized, "watchlist"),
   ]);
 
   return {
@@ -22,5 +24,6 @@ export async function scrapeUserWatchlist(
     films: items,
     filmCount: items.length,
     fetchedAt: new Date(),
+    complete,
   };
 }

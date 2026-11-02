@@ -29,6 +29,14 @@ The watchlist, watched, watchlist-overlap, and watched-overlap routes accept:
 Watched-list and watched-overlap requests additionally accept inclusive
 `userRatingMin` and `userRatingMax` values from `0` to `5`.
 
+Letterboxd serves a Cloudflare challenge on paginated and sorted user lists
+(for example `/<user>/films/page/2/`), so scrapers detect it and never retry
+it. When later pages are blocked, the first page (and, for watched films, the
+diary RSS feed) is merged into the stored list instead of replacing it. List
+responses then report `complete: false`, and overlap responses name those users
+in `incompleteUsernames`. A job that is blocked outright fails with
+`upstream_blocked`.
+
 Filtering, counts, stable ordering, and pagination are executed in Postgres.
 `includeMetadata` changes only response shape, so metadata and genre filters
 remain active when it is `false`.

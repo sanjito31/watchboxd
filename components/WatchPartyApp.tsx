@@ -190,11 +190,16 @@ export function WatchPartyApp() {
     for (const member of members) {
       result.set(
         member.username,
-        memberStatus(member.username, overlap.status, overlap.jobs)
+        memberStatus(
+          member.username,
+          overlap.status,
+          overlap.jobs,
+          overlap.data?.incompleteUsernames ?? []
+        )
       );
     }
     return result;
-  }, [members, overlap.jobs, overlap.status]);
+  }, [members, overlap.data, overlap.jobs, overlap.status]);
 
   async function handleCopyLink() {
     const ok = await copyShareLink();
@@ -398,11 +403,21 @@ function mergeProfile(
 function memberStatus(
   username: string,
   status: AsyncResourceStatus,
-  jobs: ApiJobSummary[]
+  jobs: ApiJobSummary[],
+  incompleteUsernames: readonly string[]
 ): MemberLoadState {
   if (status === "loading") return { status, label: "Checking…" };
   if (status === "error") return { status, label: "Retry needed" };
-  if (status === "success") return { status, label: "Compared" };
+  if (status === "success") {
+    // Letterboxd blocks paging past the first page of some lists, so only
+    // the most recent films could be read for this member.
+    return {
+      status,
+      label: incompleteUsernames.includes(username)
+        ? "Compared (recent films only)"
+        : "Compared",
+    };
+  }
   if (status !== "pending") return { status: "idle" };
 
   const watchlistJob = jobs.find(

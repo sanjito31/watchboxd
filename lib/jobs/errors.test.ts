@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { ProviderNotFoundError } from "@/lib/letterboxd/providerErrors";
+import {
+  ProviderBlockedError,
+  ProviderNotFoundError,
+} from "@/lib/letterboxd/providerErrors";
 import { RetryableJobError } from "./contracts";
 import { classifyJobError, sanitizeJobFailure } from "./errors";
 
@@ -10,6 +13,17 @@ describe("job error handling", () => {
     ).toMatchObject({
       retryable: false,
       failure: { code: "not_found" },
+    });
+  });
+
+  it("does not retry Cloudflare challenges", () => {
+    expect(
+      classifyJobError(
+        new ProviderBlockedError("challenged", { status: 403 })
+      )
+    ).toMatchObject({
+      retryable: false,
+      failure: { code: "upstream_blocked" },
     });
   });
 

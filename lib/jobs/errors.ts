@@ -34,6 +34,7 @@ export function classifyJobError(error: unknown): ClassifiedJobError {
       failure: sanitizeJobFailure(code, error.message),
       retryable:
         error.kind !== "not_found" &&
+        error.kind !== "blocked" &&
         error.kind !== "configuration" &&
         error.kind !== "parse_error",
       retryAfterSeconds: error.retryAfterSeconds,
@@ -140,6 +141,8 @@ function providerCode(kind: ProviderError["kind"]): JobFailureCode {
   switch (kind) {
     case "not_found":
       return "not_found";
+    case "blocked":
+      return "upstream_blocked";
     case "rate_limited":
       return "rate_limited";
     case "timeout":
@@ -168,6 +171,8 @@ function defaultMessage(code: JobFailureCode): string {
       return "Maximum delivery attempts exhausted";
     case "upstream_unavailable":
       return "Upstream service unavailable";
+    case "upstream_blocked":
+      return "Upstream blocked automated access";
     case "unknown":
       return "Unknown job failure";
   }

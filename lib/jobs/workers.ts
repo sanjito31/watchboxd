@@ -204,40 +204,39 @@ export async function persistFilmGridSnapshot(
   }
 
   const fetchedAt = snapshot.fetchedAt;
+  const complete = snapshot.complete ?? true;
+  const freshness =
+    kind === "watchlist"
+      ? {
+          watchlistFetchedAt: fetchedAt,
+          watchlistStaleAt: computeStaleAt("watchlist", fetchedAt),
+          watchlistComplete: complete,
+        }
+      : {
+          watchedFetchedAt: fetchedAt,
+          watchedStaleAt: computeStaleAt("watched", fetchedAt),
+          watchedComplete: complete,
+        };
   const user = await transaction.letterboxdUser.upsert({
     where: { username: snapshot.username },
     create: {
       username: snapshot.username,
       displayName: snapshot.displayName,
       avatarUrl: snapshot.avatarUrl,
-      ...(kind === "watchlist"
-        ? {
-            watchlistFetchedAt: fetchedAt,
-            watchlistStaleAt: computeStaleAt("watchlist", fetchedAt),
-          }
-        : {
-            watchedFetchedAt: fetchedAt,
-            watchedStaleAt: computeStaleAt("watched", fetchedAt),
-          }),
+      ...freshness,
     },
     update: {
       displayName: snapshot.displayName,
       avatarUrl: snapshot.avatarUrl,
-      ...(kind === "watchlist"
-        ? {
-            watchlistFetchedAt: fetchedAt,
-            watchlistStaleAt: computeStaleAt("watchlist", fetchedAt),
-          }
-        : {
-            watchedFetchedAt: fetchedAt,
-            watchedStaleAt: computeStaleAt("watched", fetchedAt),
-          }),
+      ...freshness,
     },
   });
 
   const materialized = await materializeMovies(transaction, snapshot.items);
   const relationships = deduplicateRelationships(materialized);
-  if (kind === "watchlist") {
+  if (!complete) {
+    await mergeFilmRelationships(transaction, kind, user.id, relationships);
+  } else if (kind === "watchlist") {
     await transaction.watchlistItem.deleteMany({ where: { userId: user.id } });
     if (relationships.length > 0) {
       await transaction.watchlistItem.createMany({
@@ -271,6 +270,63 @@ export async function persistFilmGridSnapshot(
           .map((entry) => entry.letterboxdSlug),
         context.environment
       );
+}
+
+/**
+ * Upserts a partial snapshot ahead of the stored items instead of replacing
+ * them: incoming items take positions before every stored one, then the list
+ * is renumbered from 0. Stored items missing from the partial snapshot stay.
+ */
+async function mergeFilmRelationships(
+  transaction: PersistenceTransaction,
+  kind: "watchlist" | "watched",
+  userId: bigint,
+  relationships: MaterializedMovie[]
+): Promise<void> {
+  if (relationships.length > 0) {
+    const payload = JSON.stringify(
+      relationships.map(({ movieId, userRating }, index) => ({
+        movieId: movieId.toString(),
+        position: index - relationships.length,
+        userRating,
+      }))
+    );
+    await transaction.$executeRaw(
+      kind === "watchlist"
+        ? Prisma.sql`
+            INSERT INTO "WatchlistItem" ("userId", "movieId", "position")
+            SELECT ${userId}, source."movieId", source.position
+            FROM jsonb_to_recordset(${payload}::jsonb) AS source(
+              "movieId" bigint, position integer
+            )
+            ON CONFLICT ("userId", "movieId") DO UPDATE SET
+              "position" = EXCLUDED."position"
+          `
+        : Prisma.sql`
+            INSERT INTO "WatchedItem" ("userId", "movieId", "position", "userRating")
+            SELECT ${userId}, source."movieId", source.position, source."userRating"
+            FROM jsonb_to_recordset(${payload}::jsonb) AS source(
+              "movieId" bigint, position integer, "userRating" double precision
+            )
+            ON CONFLICT ("userId", "movieId") DO UPDATE SET
+              "position" = EXCLUDED."position",
+              "userRating" = COALESCE(EXCLUDED."userRating", "WatchedItem"."userRating")
+          `
+    );
+  }
+
+  const table = Prisma.raw(
+    kind === "watchlist" ? '"WatchlistItem"' : '"WatchedItem"'
+  );
+  await transaction.$executeRaw(Prisma.sql`
+    UPDATE ${table} AS item SET "position" = ranked.position
+    FROM (
+      SELECT id, (ROW_NUMBER() OVER (ORDER BY "position", id) - 1)::integer AS position
+      FROM ${table}
+      WHERE "userId" = ${userId}
+    ) AS ranked
+    WHERE item.id = ranked.id AND item."position" <> ranked.position
+  `);
 }
 
 interface MaterializedMovie {

@@ -80,6 +80,27 @@ describe("ApiService Letterboxd movie cache", () => {
   });
 
   it.each(["watchlist", "watched"] as const)(
+    "reports whether the stored %s came from a complete scrape",
+    async (kind) => {
+      const repository = fakeRepository();
+      const snapshot = list([movie("ready", "resolved")]);
+      snapshot.user[kind].complete = false;
+      repository.getWatchlist = vi.fn().mockResolvedValue(snapshot);
+      repository.getWatched = vi.fn().mockResolvedValue(snapshot);
+      const service = new ApiService(repository, fakeJobs(), () => now);
+
+      const response =
+        kind === "watchlist"
+          ? await service.getWatchlist("alice", query())
+          : await service.getWatched("alice", query());
+
+      expect("data" in response && response.data).toMatchObject({
+        complete: false,
+      });
+    }
+  );
+
+  it.each(["watchlist", "watched"] as const)(
     "returns a completed %s snapshot without checking child jobs",
     async (kind) => {
       const repository = fakeRepository();
@@ -285,7 +306,12 @@ describe("ApiService Letterboxd movie cache", () => {
   it("returns watched union attribution and each requested user's rating", async () => {
     const repository = fakeRepository();
     const alice = user();
-    const bob = { ...user(), username: "bob", displayName: "Bob" };
+    const bob = {
+      ...user(),
+      username: "bob",
+      displayName: "Bob",
+      watched: { ...fresh, complete: false },
+    };
     repository.getUsers = vi.fn().mockResolvedValue([alice, bob]);
     repository.getWatchedOverlap = vi.fn().mockResolvedValue({
       groups: [
@@ -312,6 +338,7 @@ describe("ApiService Letterboxd movie cache", () => {
 
     expect(response).toMatchObject({
       data: {
+        incompleteUsernames: ["bob"],
         films: [
           {
             letterboxdSlug: "shared-watch",
@@ -335,8 +362,8 @@ function user(stamp = fresh): UserRecord {
     displayName: "Alice",
     avatarUrl: null,
     profile: fresh,
-    watchlist: stamp,
-    watched: stamp,
+    watchlist: { ...stamp, complete: true },
+    watched: { ...stamp, complete: true },
     network: fresh,
   };
 }

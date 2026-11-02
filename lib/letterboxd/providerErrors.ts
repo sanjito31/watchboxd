@@ -4,6 +4,7 @@ export type RetryableProviderErrorKind =
   | "upstream_unavailable";
 export type PermanentProviderErrorKind =
   | "not_found"
+  | "blocked"
   | "configuration"
   | "parse_error";
 export type ProviderErrorKind =
@@ -67,4 +68,22 @@ export function isProviderNotFoundError(
     error instanceof ProviderNotFoundError ||
     (error instanceof ProviderError && error.kind === "not_found")
   );
+}
+
+/**
+ * Letterboxd's Cloudflare config puts a JS challenge on specific paths
+ * (paginated and sorted user lists). Retrying cannot succeed and only lowers
+ * the egress IP's reputation, so this is classified as permanent.
+ */
+export class ProviderBlockedError extends ProviderPermanentError {
+  constructor(message: string, options: ProviderErrorOptions = {}) {
+    super(message, "blocked", options);
+    this.name = "ProviderBlockedError";
+  }
+}
+
+export function isProviderBlockedError(
+  error: unknown
+): error is ProviderBlockedError {
+  return error instanceof ProviderError && error.kind === "blocked";
 }

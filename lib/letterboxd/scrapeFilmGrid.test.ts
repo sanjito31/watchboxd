@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
+import { ProviderBlockedError } from "./providerErrors";
 import {
   buildFilmGridPageUrl,
   scrapeFilmGrid,
+  scrapeFilmGridBestEffort,
 } from "./scrapeFilmGrid";
 
 function grid(
@@ -182,5 +184,59 @@ describe("scrapeFilmGrid", () => {
         sleep: async () => undefined,
       })
     ).rejects.toThrow("Film grid exceeded the 1-page safety limit");
+  });
+
+  it("returns earlier pages as incomplete when a later page is challenged", async () => {
+    const fetchPage = vi
+      .fn<(url: string) => Promise<string>>()
+      .mockResolvedValueOnce(
+        withNextPage(
+          grid({ slug: "one", name: "One (2020)" }),
+          "/alice/films/page/2/"
+        )
+      )
+      .mockRejectedValueOnce(
+        new ProviderBlockedError("challenged", { status: 403 })
+      );
+
+    await expect(
+      scrapeFilmGridBestEffort("alice", "films", {
+        fetchPage,
+        sleep: async () => undefined,
+      })
+    ).resolves.toMatchObject({
+      complete: false,
+      items: [{ sourceSlug: "one", position: 0 }],
+    });
+    expect(fetchPage).toHaveBeenCalledTimes(2);
+  });
+
+  it("still fails when the first page is challenged", async () => {
+    const error = new ProviderBlockedError("challenged", { status: 403 });
+    const fetchPage = vi.fn().mockRejectedValue(error);
+
+    await expect(
+      scrapeFilmGridBestEffort("alice", "watchlist", { fetchPage })
+    ).rejects.toBe(error);
+  });
+
+  it("keeps the strict scrape fail-closed on a later-page challenge", async () => {
+    const error = new ProviderBlockedError("challenged", { status: 403 });
+    const fetchPage = vi
+      .fn<(url: string) => Promise<string>>()
+      .mockResolvedValueOnce(
+        withNextPage(
+          grid({ slug: "one", name: "One (2020)" }),
+          "/alice/films/page/2/"
+        )
+      )
+      .mockRejectedValueOnce(error);
+
+    await expect(
+      scrapeFilmGrid("alice", "films", {
+        fetchPage,
+        sleep: async () => undefined,
+      })
+    ).rejects.toBe(error);
   });
 });

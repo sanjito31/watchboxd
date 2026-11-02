@@ -119,6 +119,7 @@ export const JOB_FAILURE_CODES = [
   "invalid_input",
   "not_found",
   "upstream_unavailable",
+  "upstream_blocked",
   "rate_limited",
   "timeout",
   "parse_error",
